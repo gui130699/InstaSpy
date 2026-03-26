@@ -25,8 +25,22 @@ export default function ProfilePopup() {
     async function load() {
       try {
         const acc = await db.accounts.get(accountId!)
-        if (!acc?.session_token) throw new Error('Sem sessão ativa')
-        const data = await api.fetchProfile(state.username!, acc.session_token)
+        if (!acc) throw new Error('Conta não encontrada. Reconecte com o Session ID.')
+
+        // Restaura a sessão no servidor (se reiniciou, o token em memória se perde)
+        const restored = await api.restoreSession(
+          acc.session_token ?? null,
+          acc.serialized_session ?? null
+        )
+        if (!restored.ok) throw new Error('Sessão expirada. Abra Configurações e reconecte com o Session ID.')
+
+        // Atualiza token no DB se o servidor gerou um novo
+        let activeToken = restored.token
+        if (activeToken !== acc.session_token) {
+          await db.accounts.update(acc.id!, { session_token: activeToken })
+        }
+
+        const data = await api.fetchProfile(state.username!, activeToken)
         setProfile(data)
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Erro ao carregar perfil')
