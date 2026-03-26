@@ -65,7 +65,7 @@ export default function AlertsPage() {
   }
 
   const filterTypes: Array<Alert['type'] | 'all'> = [
-    'all', 'new_follower', 'lost_follower', 'new_like', 'lost_like', 'new_post'
+    'all', 'new_follower', 'lost_follower', 'new_following', 'lost_following', 'new_like', 'lost_like', 'new_post'
   ]
 
   return (

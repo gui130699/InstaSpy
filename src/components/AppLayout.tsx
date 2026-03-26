@@ -35,6 +35,7 @@ export default function AppLayout() {
     { to: '/posts', icon: '📷', label: 'Posts' },
     { to: '/monitored', icon: '🔍', label: 'Perfis Monitorados' },
     { to: '/ranking', icon: '🏆', label: 'Ranking' },
+    { to: '/tasks', icon: '📋', label: 'Tarefas' },
     { to: '/alerts', icon: '🔔', label: 'Alertas' },
     { to: '/settings', icon: '⚙️', label: 'Configurações' }
   ]

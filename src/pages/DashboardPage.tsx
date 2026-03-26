@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useCollection } from '../context/CollectionContext'
 import { db } from '../db/database'
 import { getSnapshotHistory } from '../services/snapshotService'
 import { runMockCollection } from '../services/mockCollector'
@@ -22,6 +23,7 @@ function alertIcon(type: Alert['type']): string {
 export default function DashboardPage() {
   const { accountId, session } = useAuth()
   const navigate = useNavigate()
+  const { enqueueBatch, collecting: globalCollecting } = useCollection()
 
   const [account, setAccount] = useState<{ username: string; last_sync?: number; isReal?: boolean } | null>(null)
   const [latest, setLatest] = useState<Snapshot | null>(null)
@@ -144,6 +146,26 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleCollectAll() {
+    if (!accountId || collecting || globalCollecting) return
+    const acc = await db.accounts.get(accountId)
+    const mode = [...collectModes].join(',')
+    const monitoredProfiles = await db.monitored_profiles
+      .where('user_id').equals(session?.userId ?? 0).toArray()
+    const items = [
+      { type: 'own' as const, accountId, username: acc?.username ?? 'minha conta', mode },
+      ...monitoredProfiles.map(p => ({
+        type: 'monitored' as const,
+        profId: p.id!,
+        accountId,
+        username: p.username,
+        mode
+      }))
+    ]
+    enqueueBatch(items)
+    navigate('/tasks')
+  }
+
   async function handleClear() {
     if (!accountId) return
     if (!window.confirm('Limpar todos os dados coletados desta conta?\n\nIsso apaga snapshots, posts e alertas. A próxima coleta será o primeiro snapshot.')) return
@@ -218,10 +240,21 @@ export default function DashboardPage() {
         <button
           className="btn btn-primary btn-sm"
           onClick={handleCollect}
-          disabled={collecting}
+          disabled={collecting || globalCollecting}
         >
           {collecting ? '⏳ Coletando...' : '🔄 Coletar agora'}
         </button>
+        {account?.isReal && (
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={handleCollectAll}
+            disabled={collecting || globalCollecting}
+            title="Coleta meu perfil + todos os perfis monitorados em fila"
+            style={{ borderColor: 'rgba(102,126,234,0.4)', color: 'var(--accent-blue)' }}
+          >
+            ⚡ Coletar tudo
+          </button>
+        )}
         {!collecting && (latest || previous) && (
           <button
             className="btn btn-outline btn-sm"

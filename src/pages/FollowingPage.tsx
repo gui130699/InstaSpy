@@ -16,8 +16,9 @@ export default function FollowingPage() {
   }, [accountId])
 
   const latest = snapshots[0]
-  const previous = snapshots[1]
-  const diff = latest && previous ? compareSnapshots(previous, latest) : null
+  const oldest = snapshots[snapshots.length - 1]
+  // Compara latest vs oldest para mostrar todas as mudanças acumuladas desde o início
+  const diff = latest && oldest && latest !== oldest ? compareSnapshots(oldest, latest) : null
 
   const displayList = () => {
     if (!latest) return []
