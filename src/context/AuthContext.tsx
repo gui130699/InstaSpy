@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import { getSession, logout as logoutService, type SessionData } from '../services/authService'
-import { db } from '../db/database'
+import { db, type Account } from '../db/database'
 
 const DEFAULT_USER_KEY = 'instamonitor_default_uid'
 
@@ -30,24 +30,31 @@ async function getOrCreateDefaultUser(): Promise<SessionData> {
 interface AuthContextType {
   session: SessionData | null
   accountId: number | null
+  accounts: Account[]
   loading: boolean
   setSession: (s: SessionData | null) => void
   setAccountId: (id: number | null) => void
+  switchAccount: (id: number) => void
+  refreshAccounts: () => Promise<void>
   logout: () => void
 }
 
 const AuthContext = createContext<AuthContextType>({
   session: null,
   accountId: null,
+  accounts: [],
   loading: true,
   setSession: () => {},
   setAccountId: () => {},
+  switchAccount: () => {},
+  refreshAccounts: async () => {},
   logout: () => {}
 })
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSessionState] = useState<SessionData | null>(null)
-  const [accountId, setAccountId] = useState<number | null>(null)
+  const [accountId, setAccountIdState] = useState<number | null>(null)
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -59,31 +66,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sessionStorage.setItem('instamonitor_session', JSON.stringify(s))
       }
       setSessionState(s)
-      await loadAccount(s.userId)
+      await loadAccounts(s.userId)
       setLoading(false)
     }
     init()
   }, [])
 
-  async function loadAccount(userId: number) {
-    const acc = await db.accounts.where('user_id').equals(userId).first()
-    if (acc?.id) setAccountId(acc.id)
+  async function loadAccounts(userId: number) {
+    const all = await db.accounts.where('user_id').equals(userId).toArray()
+    setAccounts(all)
+    if (all.length === 0) return
+    const storedId = localStorage.getItem(`instamonitor_active_acc_${userId}`)
+    const active = (storedId ? all.find(a => a.id === Number(storedId)) : null) ?? all[0]
+    setAccountIdState(active.id!)
+  }
+
+  const refreshAccounts = useCallback(async () => {
+    const s = getSession()
+    if (!s) return
+    const all = await db.accounts.where('user_id').equals(s.userId).toArray()
+    setAccounts(all)
+  }, [])
+
+  function setAccountId(id: number | null) {
+    setAccountIdState(id)
+  }
+
+  function switchAccount(id: number) {
+    const s = getSession()
+    if (s) localStorage.setItem(`instamonitor_active_acc_${s.userId}`, String(id))
+    setAccountIdState(id)
   }
 
   function setSession(s: SessionData | null) {
     setSessionState(s)
-    if (s) loadAccount(s.userId)
-    else setAccountId(null)
+    if (s) loadAccounts(s.userId)
+    else { setAccountIdState(null); setAccounts([]) }
   }
 
   function logout() {
     logoutService()
     setSessionState(null)
-    setAccountId(null)
+    setAccountIdState(null)
+    setAccounts([])
   }
 
   return (
-    <AuthContext.Provider value={{ session, accountId, loading, setSession, setAccountId, logout }}>
+    <AuthContext.Provider value={{ session, accountId, accounts, loading, setSession, setAccountId, switchAccount, refreshAccounts, logout }}>
       {children}
     </AuthContext.Provider>
   )

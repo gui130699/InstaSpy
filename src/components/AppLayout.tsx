@@ -7,11 +7,12 @@ import ProfilePopup from './ProfilePopup'
 import { db } from '../db/database'
 
 export default function AppLayout() {
-  const { logout, accountId } = useAuth()
+  const { logout, accountId, accounts, switchAccount } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const { collecting, job: collectionJob, collectProgress } = useCollection()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showSwitcher, setShowSwitcher] = useState(false)
   const [igUsername, setIgUsername] = useState('')
   const [igAvatar, setIgAvatar] = useState('')
 
@@ -57,6 +58,14 @@ export default function AppLayout() {
         />
       )}
 
+      {/* Overlay para fechar seletor de contas */}
+      {showSwitcher && (
+        <div
+          onClick={() => setShowSwitcher(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 199 }}
+        />
+      )}
+
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-logo">
           <span>📊</span>
@@ -77,8 +86,67 @@ export default function AppLayout() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          <div className="user-info">
+        <div className="sidebar-footer" style={{ position: 'relative' }}>
+          {/* Seletor de contas */}
+          {showSwitcher && (
+            <div style={{
+              position: 'absolute',
+              bottom: 'calc(100% + 4px)',
+              left: 0,
+              right: 0,
+              background: 'var(--surface)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 10,
+              overflow: 'hidden',
+              zIndex: 200,
+              boxShadow: '0 -4px 20px rgba(0,0,0,0.4)',
+            }}>
+              <div style={{ padding: '8px 12px 4px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>
+                Contas
+              </div>
+              {accounts.map(acc => (
+                <button key={acc.id}
+                  onClick={() => { switchAccount(acc.id!); setShowSwitcher(false) }}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px', background: acc.id === accountId ? 'rgba(102,126,234,0.15)' : 'transparent',
+                    border: 'none', cursor: 'pointer', color: 'var(--text-primary)', transition: 'background 0.15s',
+                  }}>
+                  <div style={{
+                    width: 30, height: 30, borderRadius: '50%',
+                    background: 'rgba(102,126,234,0.25)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 13, overflow: 'hidden', flexShrink: 0,
+                    border: acc.id === accountId ? '2px solid rgba(102,126,234,0.8)' : '2px solid transparent',
+                  }}>
+                    {acc.avatar_url
+                      ? <img src={acc.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                      : acc.username?.charAt(0).toUpperCase() ?? 'I'}
+                  </div>
+                  <span style={{ fontSize: 13, flex: 1, textAlign: 'left', fontWeight: acc.id === accountId ? 600 : 400 }}>
+                    @{acc.username}
+                  </span>
+                  {acc.id === accountId && (
+                    <span style={{ color: 'var(--accent-green)', fontSize: 14 }}>✓</span>
+                  )}
+                </button>
+              ))}
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+              <button
+                onClick={() => { navigate('/setup?new=1'); setShowSwitcher(false) }}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '10px 12px', background: 'transparent', border: 'none',
+                  cursor: 'pointer', color: 'var(--accent-blue)', fontSize: 13,
+                }}>
+                <span>➕</span>
+                Adicionar conta
+              </button>
+            </div>
+          )}
+
+          <div className="user-info" style={{ cursor: 'pointer', flex: 1, minWidth: 0 }}
+            onClick={() => setShowSwitcher(o => !o)}>
             {igAvatar ? (
               <img
                 src={igAvatar}
@@ -91,13 +159,15 @@ export default function AppLayout() {
                 {igUsername?.charAt(0).toUpperCase() ?? 'IG'}
               </div>
             )}
-            <div className="user-details">
-              <div className="user-name">@{igUsername || 'conta'}</div>
-              <div className="user-email">Instagram</div>
+            <div className="user-details" style={{ flex: 1, minWidth: 0 }}>
+              <div className="user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                @{igUsername || 'conta'} {accounts.length > 1 && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{showSwitcher ? '▲' : '▼'}</span>}
+              </div>
+              <div className="user-email">{accounts.length > 1 ? `${accounts.length} contas` : 'Instagram'}</div>
             </div>
           </div>
-          <button className="btn-logout" onClick={handleLogout}>
-            🛊troca
+          <button className="btn-logout" title="Adicionar conta" onClick={() => navigate('/setup?new=1')}>
+            ➕
           </button>
         </div>
       </aside>

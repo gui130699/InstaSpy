@@ -5,10 +5,11 @@ import { db } from '../db/database'
 import { api } from '../services/apiClient'
 
 export default function SettingsPage() {
-  const { session, accountId } = useAuth()
+  const { session, accountId, accounts, switchAccount, refreshAccounts } = useAuth()
   const navigate = useNavigate()
   const [exported, setExported] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [removing, setRemoving] = useState<number | null>(null)
   const [msg, setMsg] = useState('')
   const [serverOnline, setServerOnline] = useState<boolean | null>(null)
   const [accountMode, setAccountMode] = useState<'real' | 'demo' | null>(null)
@@ -45,6 +46,27 @@ export default function SettingsPage() {
     URL.revokeObjectURL(url)
     setExported(true)
     setTimeout(() => setExported(false), 3000)
+  }
+
+  async function removeAccount(id: number) {
+    if (!confirm('Remover esta conta? Todos os snapshots, posts e alertas desta conta serão apagados.')) return
+    setRemoving(id)
+    try {
+      await Promise.all([
+        db.accounts.delete(id),
+        db.snapshots.where('account_id').equals(id).delete(),
+        db.posts.where('account_id').equals(id).delete(),
+        db.post_snapshots.where('account_id').equals(id).delete(),
+        db.alerts.where('account_id').equals(id).delete(),
+      ])
+      await refreshAccounts()
+      setMsg('✅ Conta removida')
+    } catch {
+      setMsg('❌ Erro ao remover conta')
+    } finally {
+      setRemoving(null)
+      setTimeout(() => setMsg(''), 3000)
+    }
   }
 
   async function clearHistory() {
@@ -86,6 +108,79 @@ export default function SettingsPage() {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* Contas conectadas */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🔐 Contas conectadas</span>
+            <button className="btn btn-sm btn-primary" onClick={() => navigate('/setup?new=1')} style={{ fontSize: 12 }}>
+              ➕ Adicionar conta
+            </button>
+          </div>
+          {accounts.length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nenhuma conta conectada.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {accounts.map(acc => (
+                <div key={acc.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 12px', borderRadius: 8,
+                  background: acc.id === accountId ? 'rgba(102,126,234,0.1)' : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${acc.id === accountId ? 'rgba(102,126,234,0.4)' : 'var(--border-color)'}`,
+                }}>
+                  <div style={{
+                    width: 38, height: 38, borderRadius: '50%', flexShrink: 0,
+                    background: 'rgba(102,126,234,0.25)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 16, overflow: 'hidden',
+                    border: acc.id === accountId ? '2px solid rgba(102,126,234,0.7)' : '2px solid transparent',
+                  }}>
+                    {acc.avatar_url
+                      ? <img src={acc.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                      : acc.username?.charAt(0).toUpperCase() ?? 'I'}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      @{acc.username}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                      <span style={{
+                        fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 600,
+                        background: acc.serialized_session ? 'rgba(67,233,123,0.15)' : 'rgba(102,126,234,0.15)',
+                        color: acc.serialized_session ? 'var(--accent-green)' : 'var(--accent-blue)',
+                        border: `1px solid ${acc.serialized_session ? 'rgba(67,233,123,0.3)' : 'rgba(102,126,234,0.3)'}`,
+                      }}>
+                        {acc.serialized_session ? '🔐 REAL' : '🎭 DEMO'}
+                      </span>
+                      {acc.id === accountId && (
+                        <span style={{
+                          fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 600,
+                          background: 'rgba(67,233,123,0.15)', color: 'var(--accent-green)',
+                          border: '1px solid rgba(67,233,123,0.3)',
+                        }}>
+                          ✓ Ativa
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    {acc.id !== accountId && (
+                      <button className="btn btn-sm btn-primary" style={{ fontSize: 12 }}
+                        onClick={() => switchAccount(acc.id!)}>
+                        Usar
+                      </button>
+                    )}
+                    <button className="btn btn-sm" style={{ fontSize: 12, background: 'rgba(246,79,89,0.1)', border: '1px solid rgba(246,79,89,0.3)', color: 'var(--accent-pink)' }}
+                      onClick={() => removeAccount(acc.id!)}
+                      disabled={removing === acc.id}>
+                      {removing === acc.id ? '⏳' : '🗑'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Conta */}
         <div className="card">
           <div className="card-header">

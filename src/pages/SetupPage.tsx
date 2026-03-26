@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { db } from '../db/database'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../services/apiClient'
@@ -10,8 +10,10 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking')
-  const { session, setSession, setAccountId } = useAuth()
+  const { session, setSession, accountId, setAccountId, refreshAccounts } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const isNewAccount = searchParams.get('new') === '1'
 
   useEffect(() => {
     let cancelled = false
@@ -26,10 +28,10 @@ export default function SetupPage() {
 
   async function finishSetup(loginData: LoginResponse) {
     if (!session) return
-    const existing = await db.accounts.where('user_id').equals(session.userId).first()
     let savedId: number
-    if (existing) {
-      await db.accounts.update(existing.id!, {
+    if (!isNewAccount && accountId) {
+      // Atualiza a conta ativa atual
+      await db.accounts.update(accountId, {
         username: loginData.account.username,
         session_token: loginData.token,
         serialized_session: loginData.serialized,
@@ -37,8 +39,9 @@ export default function SetupPage() {
         avatar_url: loginData.account.avatar_url,
         last_sync: Date.now()
       })
-      savedId = existing.id!
+      savedId = accountId
     } else {
+      // Cria nova conta (modo ?new=1 ou primeira conta)
       savedId = await db.accounts.add({
         user_id: session.userId,
         username: loginData.account.username,
@@ -50,6 +53,7 @@ export default function SetupPage() {
         last_sync: Date.now()
       }) as number
     }
+    await refreshAccounts()
     setAccountId(savedId)
     navigate('/dashboard')
   }
@@ -69,9 +73,15 @@ export default function SetupPage() {
 
   return (
     <div className="login-page">
-      <div className="login-box" style={{ maxWidth: 520 }}>
+      <div className="login-box" style={{ maxWidth: 520, position: 'relative' }}>
+        {isNewAccount && (
+          <button type="button" onClick={() => navigate(-1)}
+            style={{ position: 'absolute', top: 16, left: 16, background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}>
+            ←
+          </button>
+        )}
         <span className="login-logo">🔑</span>
-        <h2 style={{ marginBottom: 8 }}>Conectar Instagram</h2>
+        <h2 style={{ marginBottom: 8 }}>{isNewAccount ? 'Adicionar nova conta' : 'Conectar Instagram'}</h2>
         <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
           Cole o valor do <strong>sessionid</strong> copiado dos cookies do Instagram.
         </p>
