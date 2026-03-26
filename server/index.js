@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const https = require('https');
 const { URL } = require('url');
+const fs = require('fs');
+const path = require('path');
 const { IgApiClient, IgCheckpointError, IgLoginTwoFactorRequiredError } = require('instagram-private-api');
 const { v4: uuid } = require('uuid');
 
@@ -10,6 +12,22 @@ app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
 const PORT = 3001;
+
+// Arquivo de log para diagnóstico
+const LOG_FILE = path.join(__dirname, 'server.log');
+const _origLog  = console.log.bind(console);
+const _origWarn = console.warn.bind(console);
+const _origErr  = console.error.bind(console);
+function writeLog(prefix, args) {
+  const line = `[${new Date().toISOString()}] ${prefix} ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')}\n`;
+  try { fs.appendFileSync(LOG_FILE, line); } catch {}
+}
+console.log   = (...a) => { _origLog(...a);   writeLog('LOG ', a); };
+console.warn  = (...a) => { _origWarn(...a);  writeLog('WARN', a); };
+console.error = (...a) => { _origErr(...a);   writeLog('ERR ', a); };
+
+// Rota para expor logs (últimas 200 linhas)
+// GET /api/logs?tail=200
 
 /* ── Armazenamento em memória de sessões ─────────────────────────────────── */
 const sessions = new Map();
@@ -235,9 +253,10 @@ async function fetchWebProfileInfo(username, cookieStr, ua) {
     // Suporta ambos os formatos: data.data.user e data.user
     const u = data?.data?.user || data?.user;
     if (!u) {
-      console.warn('[fetchWebProfileInfo] Sem dados de usuário. Keys:', Object.keys(data || {}).join(', '));
+      console.warn('[fetchWebProfileInfo] RESPOSTA SEM user:', JSON.stringify(data).substring(0, 500));
       return null;
     }
+    console.log(`[fetchWebProfileInfo] @${username}: is_private=${u.is_private} followers=${u.edge_followed_by?.count||u.follower_count} following=${u.edge_follow?.count||u.following_count} posts=${u.edge_owner_to_timeline_media?.count} avatar=${!!(u.profile_pic_url||u.profile_pic_url_hd)}`);
     const edges = u.edge_owner_to_timeline_media?.edges || [];
     const recentPosts = edges.map(e => e.node).filter(Boolean).map(p => ({
       post_id: p.id || '',
@@ -249,10 +268,11 @@ async function fetchWebProfileInfo(username, cookieStr, ua) {
       likers_list: [],
     }));
     return {
-      followers_count: u.edge_followed_by?.count || u.follower_count || 0,
-      following_count: u.edge_follow?.count    || u.following_count  || 0,
-      posts_count:     u.edge_owner_to_timeline_media?.count || u.media_count || recentPosts.length,
+      followers_count: u.edge_followed_by?.count ?? u.follower_count ?? null,
+      following_count: u.edge_follow?.count    ?? u.following_count  ?? null,
+      posts_count:     u.edge_owner_to_timeline_media?.count ?? u.media_count ?? null,
       avatar_url:      u.profile_pic_url_hd || u.hd_profile_pic_url_info?.url || u.profile_pic_url || '',
+      is_private:      u.is_private || false,
       recentPosts,
     };
   } catch (e) {
@@ -828,49 +848,45 @@ app.get('/api/profile/:username', async (req, res) => {
     }
 
     // ── Sessão Web ─────────────────────────────────────────────────────────
-    // Enriquecer cookies com mid, csrftoken frescos antes de qualquer chamada
-    const cookieStr = await enrichWebCookies(s.cookieStr, s.ua || WEB_UA);
+    // NÃO chamar enrichWebCookies aqui — os cookies já foram enriquecidos durante
+    // o cookie-login/restore e chamar de novo gera cookies anônimos misturados
+    // aos da sessão, o que causa 429 (rate limit) no Instagram.
+    const cookieStr = s.cookieStr;
     const ua = s.ua || WEB_UA;
     let foundUserId = null;
     let foundAvatarUrl = '';
 
-    // Tentativa 1: web_profile_info (retorna dados completos incluindo perfis privados que você segue)
-    const wpi = await fetchWebProfileInfo(username, cookieStr, ua);
-    if (wpi) {
-      console.log(`[profile] @${username} via web_profile_info OK (seg=${wpi.followers_count} snd=${wpi.following_count} posts=${wpi.posts_count} avatar=${!!wpi.avatar_url})`);
-      return res.json({
-        username,
-        avatar_url: wpi.avatar_url || '',
-        followers_count: wpi.followers_count,
-        following_count: wpi.following_count,
-        posts_count: wpi.posts_count,
-      });
+    // Tentativa 1: web_profile_info (única que funciona para sessões web + conta privada seguida)
+    // Retenta 1x em caso de 429 após 3s
+    let wpi = await fetchWebProfileInfo(username, cookieStr, ua);
+    if (!wpi) {
+      // Espera 3s e tenta mais uma vez (429 é temporário)
+      console.log(`[profile] Aguardando 3s e retentando web_profile_info para @${username}...`);
+      await sleep(3000);
+      wpi = await fetchWebProfileInfo(username, cookieStr, ua);
     }
-    console.warn(`[profile] web_profile_info falhou para @${username} — tentando by/username...`);
-
-    // Tentativa 2: by/username via API mobile (funciona para privados que você segue)
-    try {
-      console.log(`[profile] Tentando by/username para @${username}...`);
-      const byData = await igGetSafe(
-        `/users/by/username/${encodeURIComponent(username)}/`,
-        cookieStr, ua, false, 1, true
-      );
-      const ub = byData?.user;
-      if (ub?.username) {
-        console.log(`[profile] @${username} via by/username OK`);
+    if (wpi) {
+      // Se é conta privada e os campos retornaram null, os dados não estão acessíveis
+      const isAccessible = wpi.followers_count !== null && wpi.followers_count > 0;
+      const limited = wpi.is_private && !isAccessible;
+      console.log(`[profile] @${username} via web_profile_info OK (seg=${wpi.followers_count} snd=${wpi.following_count} posts=${wpi.posts_count} private=${wpi.is_private} limited=${limited} avatar=${!!wpi.avatar_url})`);
+      if (!limited) {
         return res.json({
-          username: ub.username || username,
-          avatar_url: ub.profile_pic_url_hd || ub.hd_profile_pic_url_info?.url || ub.profile_pic_url || '',
-          followers_count: ub.follower_count || 0,
-          following_count: ub.following_count || 0,
-          posts_count: ub.media_count || 0,
+          username,
+          avatar_url: wpi.avatar_url || '',
+          followers_count: wpi.followers_count ?? 0,
+          following_count: wpi.following_count ?? 0,
+          posts_count: wpi.posts_count ?? 0,
         });
       }
-    } catch (byErr) {
-      console.warn(`[profile] by/username falhou: ${byErr.message}`);
+      // Conta privada com dados limitados — tenta outros endpoints antes de desistir
+      foundAvatarUrl = wpi.avatar_url || foundAvatarUrl;
+      console.warn(`[profile] @${username} é privado e só retornou dados limitados — tentando search...`);
+    } else {
+      console.warn(`[profile] web_profile_info falhou para @${username} — tentando search...`);
     }
 
-    // Tentativa 3: user search → obtém user_id
+    // Tentativa 2: user search → obtém user_id
     try {
       console.log(`[profile] Tentando busca pelo username @${username}...`);
       const searchData = await igGetSafe(
@@ -899,7 +915,7 @@ app.get('/api/profile/:username', async (req, res) => {
       console.warn(`[profile] user search falhou: ${searchErr.message}`);
     }
 
-    // Tentativa 4: /api/v1/users/{id}/info/ via i.instagram.com (funciona para seguidos privados)
+    // Tentativa 3: /api/v1/users/{id}/info/ via i.instagram.com (funciona para seguidos privados)
     if (foundUserId) {
       try {
         console.log(`[profile] Tentando user info por ID ${foundUserId}...`);
@@ -921,7 +937,7 @@ app.get('/api/profile/:username', async (req, res) => {
       }
     }
 
-    // Tentativa 5: username info endpoint (variante web)
+    // Tentativa 4: username info endpoint (variante web)
     try {
       console.log(`[profile] Tentando usernameinfo para @${username}...`);
       const uiData = await igGetSafe(`/users/${encodeURIComponent(username)}/usernameinfo/`, cookieStr, ua, false, 1, true);
@@ -1212,6 +1228,47 @@ app.get('/api/collect', async (req, res) => {
   }
 });
 
+/* ── Diagnóstico de sessão/perfil (debug) ─────────────────────────────── */
+app.get('/api/debug-profile/:username', async (req, res) => {
+  const token = req.headers['x-session-token'];
+  const s = sessions.get(token);
+  if (!s) return res.status(401).json({ error: 'Sessão inválida', sessions_count: sessions.size });
+
+  const username = (req.params.username || '').replace('@','').trim().toLowerCase();
+  const cookieStr = await enrichWebCookies(s.cookieStr, s.ua || WEB_UA);
+  const ua = s.ua || WEB_UA;
+  const results = {};
+
+  // Teste 1: web_profile_info
+  try {
+    const d = await igGet(`/users/web_profile_info/?username=${encodeURIComponent(username)}`, cookieStr, ua, true);
+    results.web_profile_info = { ok: true, keys: Object.keys(d || {}), user_keys: Object.keys(d?.data?.user || d?.user || {}), has_avatar: !!(d?.data?.user?.profile_pic_url || d?.user?.profile_pic_url) };
+  } catch(e) { results.web_profile_info = { ok: false, error: e.message }; }
+
+  // Teste 2: by/username
+  try {
+    const d = await igGet(`/users/by/username/${encodeURIComponent(username)}/`, cookieStr, ua, false);
+    results.by_username = { ok: true, username: d?.user?.username, follower_count: d?.user?.follower_count };
+  } catch(e) { results.by_username = { ok: false, error: e.message }; }
+
+  // Teste 3: usernameinfo
+  try {
+    const d = await igGet(`/users/${encodeURIComponent(username)}/usernameinfo/`, cookieStr, ua, false);
+    results.usernameinfo = { ok: true, username: d?.user?.username, follower_count: d?.user?.follower_count };
+  } catch(e) { results.usernameinfo = { ok: false, error: e.message }; }
+
+  // Teste 4: search
+  try {
+    const d = await igGet(`/users/search/?q=${encodeURIComponent(username)}&count=3`, cookieStr, ua, true);
+    results.search = { ok: true, count: d?.users?.length || 0, first: d?.users?.[0]?.username };
+  } catch(e) { results.search = { ok: false, error: e.message }; }
+
+  // Info da sessão
+  results.session_info = { type: s.type, has_cookies: !!s.cookieStr, cookies_keys: s.cookieStr ? s.cookieStr.split(';').map(c => c.trim().split('=')[0]).join(', ') : 'none' };
+
+  res.json(results);
+});
+
 /* ── Logout ──────────────────────────────────────────────────────────────── */
 app.delete('/api/auth/session', (req, res) => {
   const token = req.headers['x-session-token'];
@@ -1221,9 +1278,24 @@ app.delete('/api/auth/session', (req, res) => {
 
 /* ── Start ───────────────────────────────────────────────────────────────── */
 app.listen(PORT, () => {
+  // Limpa log anterior ao iniciar
+  try { fs.writeFileSync(LOG_FILE, `=== Server started ${new Date().toISOString()} ===\n`); } catch {}
   console.log('══════════════════════════════════════════════');
   console.log(`  ✅ InstaMonitor Backend — http://localhost:${PORT}`);
   console.log('  Login com senha  → POST /api/auth/login');
   console.log('  Login Session ID → POST /api/auth/cookie-login');
   console.log('══════════════════════════════════════════════');
+});
+
+/* ── Rota de logs (diagnóstico) ──────────────────────────────────────────── */
+app.get('/api/logs', (_req, res) => {
+  try {
+    const content = fs.readFileSync(LOG_FILE, 'utf8');
+    const lines = content.split('\n');
+    const tail = lines.slice(-200).join('\n');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(tail);
+  } catch (e) {
+    res.send('Sem logs disponíveis: ' + e.message);
+  }
 });
