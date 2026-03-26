@@ -191,38 +191,55 @@ export default function ProfilePopup() {
               </div>
               {profile.limited && (
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, textAlign: 'center' }}>
-                  Perfil privado — dados de contagem indisponíveis
+                  🔒 Perfil privado — dados não acessíveis com sua sessão
                 </div>
               )}
             </div>
 
-            {/* Contagens */}
-            {!profile.limited && (
-              <div style={{
-                display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: 12, marginBottom: 20,
-              }}>
-                {([
-                  { label: 'Seguidores', value: profile.followers_count, icon: '👥' },
-                  { label: 'Seguindo',   value: profile.following_count, icon: '🔵' },
-                  { label: 'Posts',      value: profile.posts_count,     icon: '📷' },
-                ] as const).map(({ label, value, icon }) => (
-                  <div key={label} style={{
-                    textAlign: 'center',
-                    background: 'rgba(255,255,255,0.04)',
-                    borderRadius: 10, padding: '10px 4px',
-                    border: '1px solid var(--border-color)',
-                  }}>
-                    <div style={{ fontSize: 16 }}>{icon}</div>
-                    <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)', marginTop: 2 }}>
-                      {value.toLocaleString('pt-BR')}
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{label}</div>
+            {/* Contagens — mostra sempre, mesmo que 0 */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 12, marginBottom: 20,
+              opacity: profile.limited ? 0.45 : 1,
+            }}>
+              {([
+                { label: 'Seguidores', value: profile.followers_count, icon: '👥' },
+                { label: 'Seguindo',   value: profile.following_count, icon: '🔵' },
+                { label: 'Posts',      value: profile.posts_count,     icon: '📷' },
+              ] as const).map(({ label, value, icon }) => (
+                <div key={label} style={{
+                  textAlign: 'center',
+                  background: 'rgba(255,255,255,0.04)',
+                  borderRadius: 10, padding: '10px 4px',
+                  border: '1px solid var(--border-color)',
+                }}>
+                  <div style={{ fontSize: 16 }}>{icon}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)', marginTop: 2 }}>
+                    {profile.limited ? '—' : value.toLocaleString('pt-BR')}
                   </div>
-                ))}
-              </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Link para ver no Instagram quando dados limitados */}
+            {profile.limited && (
+              <a
+                href={`https://www.instagram.com/${profile.username}/`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'block', width: '100%', textAlign: 'center',
+                  padding: '8px 0', marginBottom: 10, borderRadius: 10,
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-muted)', fontSize: 12,
+                  textDecoration: 'none',
+                  background: 'rgba(255,255,255,0.03)',
+                }}
+              >
+                🔗 Abrir no Instagram
+              </a>
             )}
-            {profile.limited && <div style={{ marginBottom: 20 }} />}
 
             {/* Botão adicionar ao monitoramento */}
             <button

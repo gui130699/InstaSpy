@@ -148,6 +148,7 @@ async function igGet(path, cookieStr, ua, webOnly) {
       };
       if (isWeb) {
         headers['X-Requested-With'] = 'XMLHttpRequest';
+        headers['X-IG-WWW-Claim'] = '0';
         headers['Sec-Fetch-Site'] = 'same-origin';
         headers['Sec-Fetch-Mode'] = 'cors';
         headers['Sec-Fetch-Dest'] = 'empty';
@@ -251,7 +252,7 @@ async function fetchWebProfileInfo(username, cookieStr, ua) {
       followers_count: u.edge_followed_by?.count || u.follower_count || 0,
       following_count: u.edge_follow?.count    || u.following_count  || 0,
       posts_count:     u.edge_owner_to_timeline_media?.count || u.media_count || recentPosts.length,
-      avatar_url:      u.profile_pic_url || u.profile_pic_url_hd || '',
+      avatar_url:      u.profile_pic_url_hd || u.hd_profile_pic_url_info?.url || u.profile_pic_url || '',
       recentPosts,
     };
   } catch (e) {
@@ -832,23 +833,43 @@ app.get('/api/profile/:username', async (req, res) => {
     let foundUserId = null;
     let foundAvatarUrl = '';
 
-    // Tentativa 1: web_profile_info
-    // Instagram retorna dados completos para perfis privados que você segue via este endpoint
+    // Tentativa 1: web_profile_info (retorna dados completos incluindo perfis privados que você segue)
     const wpi = await fetchWebProfileInfo(username, cookieStr, ua);
-    if (wpi?.avatar_url) {
-      // Perfil encontrado — retornar mesmo que contagens sejam 0 (conta nova ou privada)
-      console.log(`[profile] @${username} via web_profile_info OK (seg=${wpi.followers_count} snd=${wpi.following_count} posts=${wpi.posts_count})`);
+    if (wpi) {
+      console.log(`[profile] @${username} via web_profile_info OK (seg=${wpi.followers_count} snd=${wpi.following_count} posts=${wpi.posts_count} avatar=${!!wpi.avatar_url})`);
       return res.json({
         username,
-        avatar_url: wpi.avatar_url,
+        avatar_url: wpi.avatar_url || '',
         followers_count: wpi.followers_count,
         following_count: wpi.following_count,
         posts_count: wpi.posts_count,
       });
     }
-    console.warn(`[profile] web_profile_info sem avatar para @${username} — tentando fallbacks...`);
+    console.warn(`[profile] web_profile_info falhou para @${username} — tentando by/username...`);
 
-    // Tentativa 2: user search → obtém user_id
+    // Tentativa 2: by/username via API mobile (funciona para privados que você segue)
+    try {
+      console.log(`[profile] Tentando by/username para @${username}...`);
+      const byData = await igGetSafe(
+        `/users/by/username/${encodeURIComponent(username)}/`,
+        cookieStr, ua, false, 1, true
+      );
+      const ub = byData?.user;
+      if (ub?.username) {
+        console.log(`[profile] @${username} via by/username OK`);
+        return res.json({
+          username: ub.username || username,
+          avatar_url: ub.profile_pic_url_hd || ub.hd_profile_pic_url_info?.url || ub.profile_pic_url || '',
+          followers_count: ub.follower_count || 0,
+          following_count: ub.following_count || 0,
+          posts_count: ub.media_count || 0,
+        });
+      }
+    } catch (byErr) {
+      console.warn(`[profile] by/username falhou: ${byErr.message}`);
+    }
+
+    // Tentativa 3: user search → obtém user_id
     try {
       console.log(`[profile] Tentando busca pelo username @${username}...`);
       const searchData = await igGetSafe(
@@ -859,7 +880,7 @@ app.get('/api/profile/:username', async (req, res) => {
       const found = users.find(u => u.username === username) || users.find(u => u.username?.includes(username));
       if (found) {
         foundUserId = found.pk || found.id;
-        if (!foundAvatarUrl) foundAvatarUrl = found.profile_pic_url || '';
+        if (!foundAvatarUrl) foundAvatarUrl = found.profile_pic_url_hd || found.hd_profile_pic_url_info?.url || found.profile_pic_url || '';
 
         // Se a busca já retornou contagens, usar direto
         if (found.follower_count || found.following_count || found.media_count) {
@@ -877,7 +898,7 @@ app.get('/api/profile/:username', async (req, res) => {
       console.warn(`[profile] user search falhou: ${searchErr.message}`);
     }
 
-    // Tentativa 3: /api/v1/users/{id}/info/ via i.instagram.com (funciona para seguidos privados)
+    // Tentativa 4: /api/v1/users/{id}/info/ via i.instagram.com (funciona para seguidos privados)
     if (foundUserId) {
       try {
         console.log(`[profile] Tentando user info por ID ${foundUserId}...`);
@@ -888,7 +909,7 @@ app.get('/api/profile/:username', async (req, res) => {
           console.log(`[profile] @${username} via user/info por ID OK`);
           return res.json({
             username: u.username || username,
-            avatar_url: u.profile_pic_url || u.profile_pic_url_hd || foundAvatarUrl,
+            avatar_url: u.profile_pic_url_hd || u.hd_profile_pic_url_info?.url || u.profile_pic_url || foundAvatarUrl,
             followers_count: u.follower_count || 0,
             following_count: u.following_count || 0,
             posts_count: u.media_count || 0,
@@ -899,16 +920,16 @@ app.get('/api/profile/:username', async (req, res) => {
       }
     }
 
-    // Tentativa 4: username info endpoint (variante web)
+    // Tentativa 5: username info endpoint (variante web)
     try {
-      console.log(`[profile] Tentando username info endpoint...`);
+      console.log(`[profile] Tentando usernameinfo para @${username}...`);
       const uiData = await igGetSafe(`/users/${encodeURIComponent(username)}/usernameinfo/`, cookieStr, ua, false, 1, true);
       const u = uiData?.user;
       if (u) {
         console.log(`[profile] @${username} via usernameinfo OK`);
         return res.json({
           username: u.username || username,
-          avatar_url: u.profile_pic_url || foundAvatarUrl,
+          avatar_url: u.profile_pic_url_hd || u.hd_profile_pic_url_info?.url || u.profile_pic_url || foundAvatarUrl,
           followers_count: u.follower_count || 0,
           following_count: u.following_count || 0,
           posts_count: u.media_count || 0,
