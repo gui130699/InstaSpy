@@ -1,7 +1,6 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/AppLayout'
-import LoginPage from './pages/LoginPage'
 import SetupPage from './pages/SetupPage'
 import DashboardPage from './pages/DashboardPage'
 import FollowersPage from './pages/FollowersPage'
@@ -14,33 +13,25 @@ import AlertsPage from './pages/AlertsPage'
 import SettingsPage from './pages/SettingsPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { session, loading } = useAuth()
+  const { accountId, loading } = useAuth()
   if (loading) return (
     <div className="loading" style={{ minHeight: '100vh' }}>
       <div className="spinner" />
       Carregando...
     </div>
   )
-  if (!session) return <Navigate to="/login" replace />
+  if (!accountId) return <Navigate to="/setup" replace />
   return <>{children}</>
 }
 
 function AppRoutes() {
-  const { session } = useAuth()
+  const { accountId } = useAuth()
 
   return (
     <Routes>
       <Route
-        path="/login"
-        element={session ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-      />
-      <Route
         path="/setup"
-        element={
-          <ProtectedRoute>
-            <SetupPage />
-          </ProtectedRoute>
-        }
+        element={accountId ? <Navigate to="/dashboard" replace /> : <SetupPage />}
       />
       <Route
         path="/"
@@ -61,7 +52,7 @@ function AppRoutes() {
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/setup" replace />} />
     </Routes>
   )
 }
