@@ -41,6 +41,11 @@ export default function SetupPage() {
       })
       savedId = accountId
     } else {
+      // Verifica se esta conta do Instagram já está conectada
+      const allAccounts = await db.accounts.where('user_id').equals(session.userId).toArray()
+      const dup = allAccounts.find(a => a.instagram_pk === loginData.account.pk)
+      if (dup) throw new Error(`@${loginData.account.username} já está conectada. Troque para ela na sidebar.`)
+
       // Cria nova conta (modo ?new=1 ou primeira conta)
       savedId = await db.accounts.add({
         user_id: session.userId,

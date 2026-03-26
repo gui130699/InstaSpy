@@ -110,7 +110,7 @@ input, textarea, select { font-family: inherit; outline: none; }
   position: fixed;
   top: 0; left: 0;
   height: 100vh;
-  z-index: 100;
+  z-index: 400;
   transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
 }
 
