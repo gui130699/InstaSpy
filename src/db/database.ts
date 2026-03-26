@@ -80,6 +80,7 @@ export interface MonitoredPost {
   profile_id: number
   post_id: string
   caption: string
+  media_url?: string
   created_at: number
 }
 

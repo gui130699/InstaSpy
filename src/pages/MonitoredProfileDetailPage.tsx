@@ -11,7 +11,7 @@ import { useAuth } from '../context/AuthContext'
 import { compareFollowerArrays } from '../services/snapshotService'
 import { runMockMonitoredCollection } from '../services/mockCollector'
 import { runRealMonitoredCollection } from '../services/realCollector'
-import { api } from '../services/apiClient'
+import { api, proxyAvatarUrl } from '../services/apiClient'
 import { formatRelativeTime, formatDateTime } from '../utils/formatters'
 
 type MainTab = 'seguidores' | 'seguindo' | 'posts'
@@ -125,6 +125,15 @@ export default function MonitoredProfileDetailPage() {
     }
   }
 
+  async function handleClear() {
+    if (!window.confirm(`Limpar todos os dados coletados de @${profile?.username}?\n\nIsso apaga snapshots, posts e curtidas. A próxima coleta será o primeiro snapshot.`)) return
+    await db.monitored_snapshots.where('profile_id').equals(profId).delete()
+    await db.monitored_posts.where('profile_id').equals(profId).delete()
+    await db.monitored_post_snapshots.where('profile_id').equals(profId).delete()
+    setCollectionMsg('')
+    await loadData()
+  }
+
   const latest = snapshots[0]
   const previous = snapshots[1]
 
@@ -218,6 +227,15 @@ export default function MonitoredProfileDetailPage() {
           >
             {collecting ? '⏳ Coletando...' : '🔄 Coletar agora'}
           </button>
+          {!collecting && (snapshots.length > 0 || posts.length > 0) && (
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={handleClear}
+              style={{ color: 'var(--accent-pink)', borderColor: 'rgba(246,79,89,0.3)' }}
+            >
+              🗑️ Limpar dados
+            </button>
+          )}
         </div>
       </div>
 
@@ -465,6 +483,15 @@ export default function MonitoredProfileDetailPage() {
                     onClick={() => setExpandedPost(isExpanded ? null : post.post_id)}
                     style={{ display: 'flex', alignItems: 'flex-start', gap: 12, justifyContent: 'space-between' }}
                   >
+                    {post.media_url && (
+                      <img
+                        src={proxyAvatarUrl(post.media_url)}
+                        alt="post"
+                        style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }}
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        onClick={ev => ev.stopPropagation()}
+                      />
+                    )}
                     <div style={{ flex: 1 }}>
                       <p style={{ fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.5, marginBottom: 10 }}>
                         {post.caption}

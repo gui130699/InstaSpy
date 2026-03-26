@@ -171,8 +171,11 @@ export async function runRealMonitoredCollection(
         profile_id: profileId,
         post_id: post.post_id,
         caption: post.caption,
+        media_url: post.media_url ?? '',
         created_at: post.created_at,
       })
+    } else if (post.media_url && !existing.media_url) {
+      await db.monitored_posts.update(existing.id!, { media_url: post.media_url })
     }
     await db.monitored_post_snapshots.add({
       post_id: post.post_id,
