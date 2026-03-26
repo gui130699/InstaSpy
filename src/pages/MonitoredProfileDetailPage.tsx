@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext'
 import { compareFollowerArrays } from '../services/snapshotService'
 import { runMockMonitoredCollection } from '../services/mockCollector'
 import { runRealMonitoredCollection } from '../services/realCollector'
+import { api } from '../services/apiClient'
 import { formatRelativeTime, formatDateTime } from '../utils/formatters'
 
 type MainTab = 'seguidores' | 'seguindo' | 'posts'
@@ -29,6 +30,20 @@ export default function MonitoredProfileDetailPage() {
   const [postSnapsMap, setPostSnapsMap] = useState<Map<string, MonitoredPostSnapshot[]>>(new Map())
   const [collecting, setCollecting] = useState(false)
   const [collectionMsg, setCollectionMsg] = useState('')
+  const [collectProgress, setCollectProgress] = useState<{ step: string; message: string; pct: number; latestUsers?: string[] } | null>(null)
+  const [collectModes, setCollectModes] = useState<Set<string>>(new Set(['followers', 'following', 'posts']))
+
+  function toggleMode(m: string) {
+    setCollectModes(prev => {
+      const next = new Set(prev)
+      if (next.has(m)) {
+        if (next.size > 1) next.delete(m)
+      } else {
+        next.add(m)
+      }
+      return next
+    })
+  }
 
   const [mainTab, setMainTab] = useState<MainTab>('seguidores')
   const [followerTab, setFollowerTab] = useState<FollowerTab>('todos')
@@ -63,6 +78,25 @@ export default function MonitoredProfileDetailPage() {
     loadData()
   }, [loadData])
 
+  // Polling do progresso durante coleta
+  useEffect(() => {
+    if (!collecting || !accountId) {
+      if (!collecting) setCollectProgress(null)
+      return
+    }
+    const interval = setInterval(async () => {
+      const acc = await db.accounts.get(accountId)
+      if (!acc?.session_token) return
+      try {
+        const p = await api.getCollectProgress(acc.session_token)
+        if (p.active && p.step) {
+          setCollectProgress({ step: p.step, message: p.message ?? '', pct: p.pct ?? 0, latestUsers: p.latestUsers })
+        }
+      } catch { /* ignora */ }
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [collecting, accountId])
+
   async function handleCollect() {
     if (!profId || collecting) return
     setCollecting(true)
@@ -72,10 +106,9 @@ export default function MonitoredProfileDetailPage() {
       let result: { newFollowers: string[]; lostFollowers: string[]; newFollowing: string[]; lostFollowing: string[] }
 
       if (accountId) {
-        // Coleta real via servidor
-        result = await runRealMonitoredCollection(profId, accountId)
+        const modeParam = [...collectModes].join(',')
+        result = await runRealMonitoredCollection(profId, accountId, modeParam)
       } else {
-        // Fallback para dados mock quando não há conta conectada
         result = await runMockMonitoredCollection(profId)
       }
 
@@ -148,14 +181,119 @@ export default function MonitoredProfileDetailPage() {
             )}
           </div>
         </div>
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={handleCollect}
-          disabled={collecting}
-        >
-          {collecting ? '⏳ Coletando...' : '🔄 Coletar agora'}
-        </button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
+          {accountId && (
+            <>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginRight: 2 }}>Coletar:</span>
+              {([
+                { key: 'followers', label: '👥 Seguidores' },
+                { key: 'following', label: '🔵 Seguindo' },
+                { key: 'posts',     label: '📷 Posts' },
+              ] as const).map(({ key, label }) => {
+                const active = collectModes.has(key)
+                return (
+                  <button
+                    key={key}
+                    onClick={() => !collecting && toggleMode(key)}
+                    style={{
+                      fontSize: 11, padding: '3px 9px', borderRadius: 12, cursor: collecting ? 'default' : 'pointer',
+                      background: active ? 'rgba(102,126,234,0.18)' : 'transparent',
+                      border: active ? '1px solid rgba(102,126,234,0.45)' : '1px solid rgba(255,255,255,0.1)',
+                      color: active ? 'var(--accent-blue)' : 'var(--text-muted)',
+                      fontWeight: active ? 700 : 400,
+                      opacity: collecting ? 0.5 : 1,
+                      transition: 'all 0.18s ease',
+                    }}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </>
+          )}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={handleCollect}
+            disabled={collecting}
+          >
+            {collecting ? '⏳ Coletando...' : '🔄 Coletar agora'}
+          </button>
+        </div>
       </div>
+
+      {/* Barra de progresso */}
+      {collecting && (
+        <div style={{
+          background: 'rgba(102,126,234,0.08)',
+          border: '1px solid rgba(102,126,234,0.2)',
+          borderRadius: 12,
+          padding: '14px 16px',
+          marginBottom: 16,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-blue)' }}>
+              {collectProgress?.message ?? 'Iniciando coleta...'}
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+              {collectProgress?.pct ?? 0}%
+            </span>
+          </div>
+          <div style={{ height: 6, background: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              width: `${collectProgress?.pct ?? 5}%`,
+              background: 'linear-gradient(90deg, #667eea, #764ba2)',
+              borderRadius: 3,
+              transition: 'width 0.6s ease',
+            }} />
+          </div>
+          <div style={{ display: 'flex', gap: 16, marginTop: 10, flexWrap: 'wrap' }}>
+            {([
+              { key: 'profile',   icon: '🔍', label: 'Perfil',      threshold: 15 },
+              { key: 'followers', icon: '👥', label: 'Seguidores',  threshold: 45 },
+              { key: 'following', icon: '🔵', label: 'Seguindo',    threshold: 76 },
+              { key: 'posts',     icon: '📷', label: 'Posts',       threshold: 88 },
+              { key: 'likers',    icon: '👍', label: 'Curtidas',    threshold: 95 },
+            ] as const).map(s => {
+              const pct = collectProgress?.pct ?? 0
+              const done = pct >= s.threshold
+              const active = !done && pct >= (s.threshold - 35)
+              return (
+                <div key={s.key} style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  fontSize: 11, fontWeight: done || active ? 600 : 400,
+                  opacity: done ? 1 : active ? 0.9 : 0.4,
+                  color: done ? 'var(--accent-green)' : active ? 'var(--accent-blue)' : 'var(--text-muted)',
+                  transition: 'all 0.3s ease',
+                }}>
+                  {s.icon} {s.label} {done && '✓'}
+                </div>
+              )
+            })}
+          </div>
+          {collectProgress?.latestUsers && collectProgress.latestUsers.length > 0 && (
+            <div style={{ marginTop: 12, borderTop: '1px solid rgba(102,126,234,0.15)', paddingTop: 10 }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+                Lendo agora
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {collectProgress.latestUsers.map((u, i) => (
+                  <span key={`${u}-${i}`} style={{
+                    fontSize: 12, padding: '3px 8px', borderRadius: 20,
+                    background: i === 0 ? 'rgba(102,126,234,0.2)' : 'rgba(255,255,255,0.05)',
+                    border: i === 0 ? '1px solid rgba(102,126,234,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                    color: i === 0 ? 'var(--accent-blue)' : 'var(--text-muted)',
+                    fontWeight: i === 0 ? 600 : 400,
+                    transition: 'all 0.3s ease',
+                  }}>
+                    @{u}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {collectionMsg && (
         <div style={{
