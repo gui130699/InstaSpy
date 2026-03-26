@@ -120,3 +120,82 @@ export async function runRealCollection(accountId: number, mode?: string) {
 
   return { followersDiff, likerDiffs, partial: !!data.partial, skipped: data.skipped ?? [], account: data.account }
 }
+
+// ─── Coleta real de perfil monitorado ────────────────────────────────────────
+
+export async function runRealMonitoredCollection(
+  profileId: number,
+  accountId: number,
+  mode?: string
+): Promise<{
+  newFollowers: string[]
+  lostFollowers: string[]
+  newFollowing: string[]
+  lostFollowing: string[]
+}> {
+  const token = await ensureSession(accountId)
+
+  const profile = await db.monitored_profiles.get(profileId)
+  if (!profile) throw new Error('Perfil monitorado não encontrado')
+
+  const data = await api.collectMonitored(token, profile.username, mode)
+  const now = data.collected_at ?? Date.now()
+
+  // Atualiza avatar do perfil monitorado se disponível
+  if (data.account.avatar_url) {
+    await db.monitored_profiles.update(profileId, { avatar_url: data.account.avatar_url })
+  }
+
+  // Busca snapshot anterior para calcular diff
+  const allPrev = await db.monitored_snapshots.where('profile_id').equals(profileId).toArray()
+  const lastSnap = allPrev.sort((a, b) => b.timestamp - a.timestamp)[0]
+
+  // Salva novo snapshot
+  await db.monitored_snapshots.add({
+    profile_id: profileId,
+    timestamp: now,
+    followers_count: data.account.followers_count || data.followers.length,
+    following_count: data.account.following_count || data.following.length,
+    posts_count: data.account.posts_count || data.posts.length,
+    last_posts: data.posts.map(p => p.post_id).slice(0, 20),
+    followers_list: data.followers,
+    following_list: data.following,
+  })
+
+  // Salva posts e snapshots de posts
+  for (const post of data.posts) {
+    if (!post.post_id) continue
+    const existing = await db.monitored_posts.where('post_id').equals(post.post_id).first()
+    if (!existing) {
+      await db.monitored_posts.add({
+        profile_id: profileId,
+        post_id: post.post_id,
+        caption: post.caption,
+        created_at: post.created_at,
+      })
+    }
+    await db.monitored_post_snapshots.add({
+      post_id: post.post_id,
+      profile_id: profileId,
+      timestamp: now,
+      likes_count: post.likes_count,
+      comments_count: post.comments_count,
+      likers_list: post.likers_list,
+    })
+  }
+
+  // Calcula diff de seguidores
+  if (!lastSnap) {
+    return { newFollowers: [], lostFollowers: [], newFollowing: [], lostFollowing: [] }
+  }
+
+  const prevFollowersSet = new Set(lastSnap.followers_list ?? [])
+  const prevFollowingSet = new Set(lastSnap.following_list ?? [])
+
+  return {
+    newFollowers: data.followers.filter(u => !prevFollowersSet.has(u)),
+    lostFollowers: (lastSnap.followers_list ?? []).filter(u => !data.followers.includes(u)),
+    newFollowing: data.following.filter(u => !prevFollowingSet.has(u)),
+    lostFollowing: (lastSnap.following_list ?? []).filter(u => !data.following.includes(u)),
+  }
+}

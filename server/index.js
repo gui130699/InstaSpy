@@ -41,6 +41,7 @@ const resumeCursors = new Map();
    ══════════════════════════════════════════════════════════════════════════ */
 
 const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+const MOBILE_UA = 'Instagram 275.0.0.27.98 Android (31/12; 560dpi; 1440x2960; samsung; SM-G988B; y2q; exynos990; en_US; 458229258)';
 
 function httpsReq(urlStr, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -243,8 +244,8 @@ function formatAccount(u) {
 }
 
 /**
- * Busca dados do perfil via web_profile_info — menos sujeito a rate-limit
- * que os endpoints de friendships. Retorna contagens reais e até 12 posts.
+ * Busca dados do perfil via web_profile_info.
+ * NOTA: Este endpoint retorna 429 de servidores (bloqueio CDN). Usado como tentativa inicial.
  */
 async function fetchWebProfileInfo(username, cookieStr, ua) {
   if (!username) return null;
@@ -282,6 +283,291 @@ async function fetchWebProfileInfo(username, cookieStr, ua) {
 }
 
 function isWebSession(s) { return s && s.type === 'web'; }
+
+/**
+ * Retorna cookieStr enriquecido com cookies de rastreamento frescos.
+ * Usa cache por sessão — enriquece no máximo 1x a cada 10 minutos para
+ * evitar rate limit. Atualiza s.cookieStr e s.lastEnrichedAt in-place.
+ */
+async function getEnrichedCookies(s) {
+  const TEN_MIN = 10 * 60 * 1000;
+  const stale = !s.lastEnrichedAt || (Date.now() - s.lastEnrichedAt) > TEN_MIN;
+  if (stale) {
+    try {
+      const fresh = await enrichWebCookies(s.cookieStr, s.ua || WEB_UA);
+      s.cookieStr = fresh;
+      s.lastEnrichedAt = Date.now();
+      console.log('[getEnrichedCookies] Cookies enriquecidos e cacheados');
+    } catch (e) {
+      console.warn('[getEnrichedCookies] Falhou, usando cookies originais:', e.message);
+    }
+  }
+  return s.cookieStr;
+}
+
+/**
+ * Raspa a página de perfil do Instagram e extrai dados do JSON embutido no HTML.
+ * Esta abordagem bypassa o bloqueio CDN que afeta o endpoint web_profile_info
+ * quando chamado de servidores.
+ */
+const BROWSER_HEADERS = {
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
+  'sec-ch-ua': '"Chromium";v="125", "Google Chrome";v="125", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'Cache-Control': 'max-age=0',
+};
+
+/** Extrai dados de perfil do HTML da página do Instagram.
+ *  Retorna { followers_count, following_count, posts_count, avatar_url, is_private, user_id } ou null.
+ */
+async function fetchProfileFromHTML(username, cookieStr, ua) {
+  try {
+    const res = await httpsReq(`https://www.instagram.com/${encodeURIComponent(username)}/`, {
+      headers: { Cookie: cookieStr, 'User-Agent': ua || WEB_UA, ...BROWSER_HEADERS }
+    });
+
+    console.log(`[fetchProfileFromHTML] @${username}: status=${res.status} len=${res.body.length}`);
+    if (res.status !== 200) {
+      console.warn(`[fetchProfileFromHTML] Status ${res.status} para @${username}`);
+      return null;
+    }
+
+    const html = res.body;
+    function decodeEmbedded(s) {
+      return s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+               .replace(/\\\//g, '/').replace(/\\"/g, '"');
+    }
+
+    // Extrai apenas os primeiros 20KB p/ meta tags (OG tags ficam no <head>)
+    const headSection = html.substring(0, 20000);
+    // Log diagnóstico do head
+    const ogAny = headSection.match(/og:description[^>]+>/i) || headSection.match(/content="[^"]*seguidores[^"]*"/i) || headSection.match(/content="[^"]*Followers[^"]*"/i);
+    console.log(`[fetchProfileFromHTML] @${username}: ogAny=${!!ogAny} headLen=${headSection.length}`);
+
+    // --- Estratégia 1: Open Graph og:description ---
+    // Formato PT: "355 seguidores, 187 seguindo, 107 publicações - Veja..."
+    // Formato EN: "1,234 Followers, 567 Following, 89 Posts - See..."
+    const ogDescMatch = headSection.match(/<meta[^>]+property\s*=\s*["']og:description["'][^>]+content\s*=\s*["']([^"']+)["']/i)
+                     || headSection.match(/<meta[^>]+content\s*=\s*["']([^"']*(?:Followers?|seguidores)[^"']+)["'][^>]+property\s*=\s*["']og:description["']/i);
+
+    function parseCount(str) {
+      // Remove separadores de milhar (ponto PT ou vírgula EN) e converte
+      if (!str) return null;
+      return parseInt(str.replace(/[.,]/g, '')) || null;
+    }
+
+    if (ogDescMatch) {
+      const desc = ogDescMatch[1];
+      console.log(`[fetchProfileFromHTML] @${username}: og:description="${desc.substring(0, 140)}"`);
+      // Seguidores: "1.163 seguidores" (PT) ou "1,163 Followers" (EN)
+      const follM   = desc.match(/([\d,.]+)\s*(?:Followers?|seguidores)/i);
+      // Seguindo: pode vir antes ou depois — "seguindo 1.540" OU "1.540 seguindo"
+      const followM = desc.match(/seguindo\s*([\d,.]+)/i) || desc.match(/([\d,.]+)\s*(?:Following|seguindo)/i);
+      // Posts: "132 posts" ou "132 publicações"
+      const postsM  = desc.match(/([\d,.]+)\s*(?:Posts?|publica[çc][oõ]es)/i);
+      const followers = parseCount(follM?.[1]);
+      // Para "seguindo 1.540": followM[0] é o match, mas o número está em followM[1] para ambas formas
+      const following = parseCount(followM?.[1]);
+      const posts     = parseCount(postsM?.[1]);
+      if (followers !== null || following !== null) {
+        console.log(`[fetchProfileFromHTML] @${username}: OG followers=${followers} following=${following} posts=${posts}`);
+        // og:image é a fonte mais confiável para o avatar (é específico deste perfil)
+        const ogImgMatch    = headSection.match(/<meta[^>]+property\s*=\s*["']og:image["'][^>]+content\s*=\s*["']([^"']+)["']/i)
+                            || headSection.match(/<meta[^>]+content\s*=\s*["']([^"']+)["'][^>]+property\s*=\s*["']og:image["']/i);
+        // Busca profile_pic_url próximo ao username (mais específico que match genérico)
+        const proximityAvatar = html.match(new RegExp(`"username"\\s*:\\s*"${username}"[^}]{0,500}"profile_pic_url_hd"\\s*:\\s*"(https[^"]+)"`))
+                             || html.match(new RegExp(`"profile_pic_url_hd"\\s*:\\s*"(https[^"]+)"[^}]{0,500}"username"\\s*:\\s*"${username}"`));
+        const privateMatch  = html.match(/"is_private"\s*:\s*(true|false)/);
+        // Prefere og:image (sempre é do perfil alvo), depois proximity match, depois match genérico
+        const rawAvatarUrl = ogImgMatch?.[1] || proximityAvatar?.[1] || '';
+        // Decodifica entidades HTML (&amp; → &) e escapes unicode
+        const avatar_url_og = rawAvatarUrl
+          ? rawAvatarUrl.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+          : '';
+        console.log(`[fetchProfileFromHTML] @${username}: ogImg=${!!ogImgMatch} avatar_url_og=${avatar_url_og.substring(0, 80)}`);
+        // Extrai user_id do HTML mesmo no path OG
+        let og_user_id = null;
+        const ogPkM  = html.match(new RegExp(`"pk"\\s*:\\s*"(\\d+)"[^}]{0,200}"username"\\s*:\\s*"${username}"`));
+        const ogPkM2 = html.match(new RegExp(`"username"\\s*:\\s*"${username}"[^}]{0,200}"pk"\\s*:\\s*"(\\d+)"`));
+        const ogIdM  = html.match(new RegExp(`"id"\\s*:\\s*"(\\d{6,20})"[^}]{0,200}"username"\\s*:\\s*"${username}"`));
+        const ogIdM2 = html.match(new RegExp(`"username"\\s*:\\s*"${username}"[^}]{0,200}"id"\\s*:\\s*"(\\d{6,20})"`));
+        const ogRelayM = html.match(new RegExp(`profilePage_(\\d{6,20})`));
+        const ogDsM  = html.match(/"owner"\s*:\s*\{"__typename"\s*:\s*"[^"]*"\s*,\s*"id"\s*:\s*"(\d{6,20})"/);
+        og_user_id = ogPkM?.[1] || ogPkM2?.[1] || ogIdM?.[1] || ogIdM2?.[1] || ogDsM?.[1] || ogRelayM?.[1] || null;
+        if (og_user_id) console.log(`[fetchProfileFromHTML] @${username}: user_id via OG path=${og_user_id}`);
+        return {
+          followers_count: followers ?? 0,
+          following_count: following ?? 0,
+          posts_count:     posts ?? 0,
+          avatar_url: avatar_url_og,
+          is_private: privateMatch?.[1] === 'true',
+          user_id: og_user_id,
+        };
+      }
+    }
+
+    const privateMatch  = html.match(/"is_private"\s*:\s*(true|false)/);
+    const avatarHdMatch = html.match(/"profile_pic_url_hd"\s*:\s*"(https[^"]+)"/);
+    const avatarMatch   = html.match(/"profile_pic_url"\s*:\s*"(https[^"]+)"/);
+    const avatar_url    = decodeEmbedded(avatarHdMatch?.[1] || avatarMatch?.[1] || '');
+    const is_private    = privateMatch?.[1] === 'true';
+
+    // Extrai user_id do HTML (pk ou id numérico junto do username)
+    let user_id = null;
+    const pkMatch = html.match(new RegExp(`"pk"\\s*:\\s*"(\\d+)"[^}]{0,200}"username"\\s*:\\s*"${username}"`));
+    const pkMatch2 = html.match(new RegExp(`"username"\\s*:\\s*"${username}"[^}]{0,200}"pk"\\s*:\\s*"(\\d+)"`));
+    const idMatch  = html.match(new RegExp(`"id"\\s*:\\s*"(\\d{6,20})"[^}]{0,200}"username"\\s*:\\s*"${username}"`));
+    const idMatch2 = html.match(new RegExp(`"username"\\s*:\\s*"${username}"[^}]{0,200}"id"\\s*:\\s*"(\\d{6,20})"`));
+    user_id = pkMatch?.[1] || pkMatch2?.[1] || idMatch?.[1] || idMatch2?.[1] || null;
+    if (user_id) console.log(`[fetchProfileFromHTML] @${username}: user_id extraído=${user_id}`);
+
+    // Padrão 1: follower_count como número
+    const followerMatch  = html.match(/"follower_count"\s*:\s*(\d+)/);
+    const followingMatch = html.match(/"following_count"\s*:\s*(\d+)/);
+    const mediaMatch     = html.match(/"media_count"\s*:\s*(\d+)/);
+    if (followerMatch && followingMatch) {
+      const result = {
+        followers_count: parseInt(followerMatch[1]),
+        following_count: parseInt(followingMatch[1]),
+        posts_count: mediaMatch ? parseInt(mediaMatch[1]) : 0,
+        avatar_url, is_private, user_id,
+      };
+      console.log(`[fetchProfileFromHTML] @${username}: followers=${result.followers_count} following=${result.following_count} posts=${result.posts_count}`);
+      return result;
+    }
+
+    // Padrão 2: edge_followed_by (formato GraphQL antigo)
+    const edgeFollower = html.match(/"edge_followed_by"\s*:\s*\{"count"\s*:\s*(\d+)\}/);
+    const edgeFollow   = html.match(/"edge_follow"\s*:\s*\{"count"\s*:\s*(\d+)\}/);
+    if (edgeFollower) {
+      const result = {
+        followers_count: parseInt(edgeFollower[1]),
+        following_count: edgeFollow ? parseInt(edgeFollow[1]) : 0,
+        posts_count: mediaMatch ? parseInt(mediaMatch[1]) : 0,
+        avatar_url, is_private, user_id,
+      };
+      console.log(`[fetchProfileFromHTML] @${username}: edge format followers=${result.followers_count}`);
+      return result;
+    }
+
+    // Conta não tem follower_count no HTML (privada ou não seguida) — retorna dados parciais
+    const hasFollower = html.includes('follower_count') || html.includes('edge_followed_by');
+    console.warn(`[fetchProfileFromHTML] @${username}: sem contagens no HTML. is_private=${is_private} hasFollowerKey=${hasFollower} user_id=${user_id}`);
+    // Retorna null para contagens mas com dados disponíveis para uso pelo caller
+    if (avatar_url || user_id) {
+      return { followers_count: null, following_count: null, posts_count: null, avatar_url, is_private, user_id };
+    }
+    return null;
+  } catch (e) {
+    console.warn(`[fetchProfileFromHTML] Erro: ${e.message}`);
+    return null;
+  }
+}
+
+/** Tenta buscar perfil via ?__a=1&__d=dis — retorna JSON direto da página do perfil.
+ *  Funciona para contas públicas; pode falhar/redirecionar para privadas.
+ */
+async function fetchProfile_a1(username, cookieStr, ua) {
+  try {
+    const csrftoken = extractCookie(cookieStr, 'csrftoken') || '';
+    const res = await httpsReq(
+      `https://www.instagram.com/${encodeURIComponent(username)}/?__a=1&__d=dis`,
+      {
+        headers: {
+          Cookie: cookieStr,
+          'User-Agent': ua || WEB_UA,
+          'X-IG-App-ID': '936619743392459',
+          'X-CSRFToken': csrftoken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+          'Referer': `https://www.instagram.com/${username}/`,
+          'Sec-Fetch-Site': 'same-origin',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Dest': 'empty',
+        }
+      }
+    );
+    console.log(`[fetchProfile_a1] @${username}: status=${res.status} len=${res.body?.length} snippet=${res.body?.substring(0,100)}`);
+    if (res.status !== 200) return null;
+    let json;
+    try { json = JSON.parse(res.body); } catch { return null; }
+
+    // Formato: { graphql: { user: {...} } } ou { data: { user: {...} } }
+    const u = json?.graphql?.user || json?.data?.user || json?.user;
+    if (!u || !u.username) return null;
+
+    const followers = u.edge_followed_by?.count ?? u.follower_count ?? null;
+    const following = u.edge_follow?.count ?? u.following_count ?? null;
+    const posts     = u.edge_owner_to_timeline_media?.count ?? u.media_count ?? null;
+    const avatar    = u.profile_pic_url_hd || u.hd_profile_pic_url_info?.url || u.profile_pic_url || '';
+    console.log(`[fetchProfile_a1] @${username}: followers=${followers} following=${following} posts=${posts}`);
+    return {
+      username: u.username,
+      avatar_url: avatar,
+      followers_count: followers,
+      following_count: following,
+      posts_count: posts,
+      is_private: u.is_private || false,
+      user_id: String(u.pk || u.id || ''),
+    };
+  } catch (e) {
+    console.warn(`[fetchProfile_a1] Erro: ${e.message}`);
+    return null;
+  }
+}
+
+/** Busca perfil via API mobile do Instagram (UA: app Android).
+ *  Web session cookies também são válidos para a API mobile.
+ */
+async function fetchProfileMobileAPI(username, cookieStr) {
+  const csrftoken = extractCookie(cookieStr, 'csrftoken') || '';
+  const headers = {
+    'User-Agent': MOBILE_UA,
+    'Cookie': cookieStr,
+    'X-IG-App-ID': '567067343352427',
+    'X-CSRFToken': csrftoken,
+    'Accept': '*/*',
+    'Accept-Language': 'pt-BR, pt-BR;q=0.9, pt;q=0.8',
+    'X-IG-Capabilities': '3brTv10=',
+    'X-IG-Connection-Type': 'WIFI',
+    'X-IG-Connection-Speed': '1000kbps',
+    'X-IG-Bandwidth-Speed-KBPS': '-1.000',
+    'X-IG-Bandwidth-TotalBytes-B': '0',
+    'X-IG-Bandwidth-TotalTime-MS': '0',
+  };
+  try {
+    const url = `https://i.instagram.com/api/v1/users/${encodeURIComponent(username)}/usernameinfo/`;
+    console.log(`[fetchProfileMobileAPI] → ${url}`);
+    const res = await httpsReq(url, { headers });
+    console.log(`[fetchProfileMobileAPI] ← status=${res.status} body=${res.body.substring(0, 200)}`);
+    if (res.status !== 200) return null;
+    let json;
+    try { json = JSON.parse(res.body); } catch { return null; }
+    const u = json?.user;
+    if (u && u.username) {
+      return {
+        username: u.username,
+        avatar_url: u.profile_pic_url_hd || u.hd_profile_pic_url_info?.url || u.profile_pic_url || '',
+        followers_count: u.follower_count || 0,
+        following_count: u.following_count || 0,
+        posts_count: u.media_count || 0,
+        is_private: u.is_private || false,
+      };
+    }
+    return null;
+  } catch (e) {
+    console.warn(`[fetchProfileMobileAPI] Erro: ${e.message}`);
+    return null;
+  }
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    ROTAS
@@ -848,45 +1134,82 @@ app.get('/api/profile/:username', async (req, res) => {
     }
 
     // ── Sessão Web ─────────────────────────────────────────────────────────
-    // NÃO chamar enrichWebCookies aqui — os cookies já foram enriquecidos durante
-    // o cookie-login/restore e chamar de novo gera cookies anônimos misturados
-    // aos da sessão, o que causa 429 (rate limit) no Instagram.
-    const cookieStr = s.cookieStr;
+    // Usa cookies enriquecidos com cache (atualiza no máximo 1x a cada 10 min)
+    const cookieStr = await getEnrichedCookies(s);
     const ua = s.ua || WEB_UA;
     let foundUserId = null;
     let foundAvatarUrl = '';
 
-    // Tentativa 1: web_profile_info (única que funciona para sessões web + conta privada seguida)
-    // Retenta 1x em caso de 429 após 3s
-    let wpi = await fetchWebProfileInfo(username, cookieStr, ua);
-    if (!wpi) {
-      // Espera 3s e tenta mais uma vez (429 é temporário)
-      console.log(`[profile] Aguardando 3s e retentando web_profile_info para @${username}...`);
-      await sleep(3000);
-      wpi = await fetchWebProfileInfo(username, cookieStr, ua);
+    // Tentativa 1: Raspar página HTML do Instagram (extrai avatar, user_id, e contagens quando disponíveis)
+    const html_data = await fetchProfileFromHTML(username, cookieStr, ua);
+    if (html_data) {
+      foundAvatarUrl = html_data.avatar_url || '';
+      foundUserId = html_data.user_id || null;
+      if (html_data.followers_count !== null) {
+        console.log(`[profile] @${username} via HTML: followers=${html_data.followers_count}`);
+        return res.json({
+          username,
+          avatar_url: foundAvatarUrl,
+          followers_count: html_data.followers_count,
+          following_count: html_data.following_count,
+          posts_count: html_data.posts_count,
+        });
+      }
+      console.log(`[profile] @${username}: HTML deu avatar/user_id mas sem contagens — seguindo tentativas...`);
     }
+
+    // Tentativa 2: ?__a=1&__d=dis (JSON mode da página de perfil)
+    const a1_data = await fetchProfile_a1(username, cookieStr, ua);
+    if (a1_data && a1_data.followers_count !== null) {
+      console.log(`[profile] @${username} via __a=1: followers=${a1_data.followers_count}`);
+      return res.json({
+        username: a1_data.username,
+        avatar_url: a1_data.avatar_url || foundAvatarUrl,
+        followers_count: a1_data.followers_count ?? 0,
+        following_count: a1_data.following_count ?? 0,
+        posts_count: a1_data.posts_count ?? 0,
+      });
+    }
+    if (a1_data?.user_id) foundUserId = foundUserId || a1_data.user_id;
+    if (a1_data?.avatar_url) foundAvatarUrl = foundAvatarUrl || a1_data.avatar_url;
+    console.warn(`[profile] __a=1 falhou para @${username} — tentando mobile API...`);
+
+    // Tentativa 3: Mobile API com UA do app Instagram Android
+    const mobile_data = await fetchProfileMobileAPI(username, cookieStr);
+    if (mobile_data) {
+      console.log(`[profile] @${username} via mobile API OK (seg=${mobile_data.followers_count})`);
+      return res.json({
+        username: mobile_data.username,
+        avatar_url: mobile_data.avatar_url || foundAvatarUrl,
+        followers_count: mobile_data.followers_count,
+        following_count: mobile_data.following_count,
+        posts_count: mobile_data.posts_count,
+      });
+    }
+    console.warn(`[profile] Mobile API falhou para @${username} — tentando web_profile_info...`);
+
+    // Tentativa 4: web_profile_info (pode funcionar em alguns casos)
+    let wpi = await fetchWebProfileInfo(username, cookieStr, ua);
     if (wpi) {
-      // Se é conta privada e os campos retornaram null, os dados não estão acessíveis
       const isAccessible = wpi.followers_count !== null && wpi.followers_count > 0;
       const limited = wpi.is_private && !isAccessible;
-      console.log(`[profile] @${username} via web_profile_info OK (seg=${wpi.followers_count} snd=${wpi.following_count} posts=${wpi.posts_count} private=${wpi.is_private} limited=${limited} avatar=${!!wpi.avatar_url})`);
+      console.log(`[profile] @${username} via web_profile_info OK (seg=${wpi.followers_count} snd=${wpi.following_count} limited=${limited})`);
       if (!limited) {
         return res.json({
           username,
-          avatar_url: wpi.avatar_url || '',
+          avatar_url: wpi.avatar_url || foundAvatarUrl || '',
           followers_count: wpi.followers_count ?? 0,
           following_count: wpi.following_count ?? 0,
           posts_count: wpi.posts_count ?? 0,
         });
       }
-      // Conta privada com dados limitados — tenta outros endpoints antes de desistir
       foundAvatarUrl = wpi.avatar_url || foundAvatarUrl;
-      console.warn(`[profile] @${username} é privado e só retornou dados limitados — tentando search...`);
+      console.warn(`[profile] @${username} é privado e dados limitados — tentando search...`);
     } else {
       console.warn(`[profile] web_profile_info falhou para @${username} — tentando search...`);
     }
 
-    // Tentativa 2: user search → obtém user_id
+    // Tentativa 5: user search → obtém user_id
     try {
       console.log(`[profile] Tentando busca pelo username @${username}...`);
       const searchData = await igGetSafe(
@@ -915,7 +1238,7 @@ app.get('/api/profile/:username', async (req, res) => {
       console.warn(`[profile] user search falhou: ${searchErr.message}`);
     }
 
-    // Tentativa 3: /api/v1/users/{id}/info/ via i.instagram.com (funciona para seguidos privados)
+    // Tentativa 6: /api/v1/users/{id}/info/ via i.instagram.com
     if (foundUserId) {
       try {
         console.log(`[profile] Tentando user info por ID ${foundUserId}...`);
@@ -937,7 +1260,7 @@ app.get('/api/profile/:username', async (req, res) => {
       }
     }
 
-    // Tentativa 4: username info endpoint (variante web)
+    // Tentativa 7: username info endpoint (variante web)
     try {
       console.log(`[profile] Tentando usernameinfo para @${username}...`);
       const uiData = await igGetSafe(`/users/${encodeURIComponent(username)}/usernameinfo/`, cookieStr, ua, false, 1, true);
@@ -1224,6 +1547,193 @@ app.get('/api/collect', async (req, res) => {
   } catch (err) {
     collectionProgress.delete(token);
     console.error('[collect]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Coleta de perfil monitorado (outra conta) ────────────────────────── */
+app.get('/api/collect-monitored', async (req, res) => {
+  const token = req.headers['x-session-token'];
+  const s = sessions.get(token);
+  if (!s) return res.status(401).json({ error: 'Sessão inválida ou expirada' });
+
+  const targetUsername = (req.query.username || '').replace('@', '').trim().toLowerCase();
+  if (!targetUsername) return res.status(400).json({ error: 'username obrigatório' });
+
+  if (!isWebSession(s)) {
+    return res.status(400).json({ error: 'Coleta de perfil monitorado requer sessão web' });
+  }
+
+  try {
+    const effectiveUA = s.ua || WEB_UA;
+    const webOnly = true;
+    const modeParam = (req.query.mode || 'followers,following,posts').toLowerCase();
+    const modes = modeParam.split(',').map(m => m.trim());
+    const doFollowers = modes.includes('followers');
+    const doFollowing = modes.includes('following');
+    const doPosts     = modes.includes('posts');
+
+    console.log(`[collect-monitored] @${targetUsername} mode=${modeParam}`);
+    collectionProgress.set(token, { active: true, step: 'init', message: `@${targetUsername} — resolvendo perfil...`, pct: 5 });
+
+    const cookieStr = await enrichWebCookies(s.cookieStr, effectiveUA);
+
+    // 1. Resolver o user_id do perfil alvo
+    console.log(`[collect-monitored] buscando perfil de @${targetUsername}...`);
+    const profileData = await fetchProfileFromHTML(targetUsername, cookieStr, effectiveUA);
+    if (!profileData) {
+      collectionProgress.delete(token);
+      return res.status(404).json({ error: `Perfil @${targetUsername} não encontrado ou inacessível` });
+    }
+
+    const targetUserId = profileData.user_id;
+    if (!targetUserId) {
+      console.warn(`[collect-monitored] @${targetUsername}: user_id não encontrado no HTML`);
+      // Retornar apenas dados de perfil sem listas completas
+      collectionProgress.delete(token);
+      return res.json({
+        collected_at: Date.now(),
+        account: {
+          pk: '',
+          username: targetUsername,
+          full_name: '',
+          avatar_url: profileData.avatar_url || '',
+          followers_count: profileData.followers_count || 0,
+          following_count: profileData.following_count || 0,
+          posts_count: profileData.posts_count || 0,
+        },
+        followers: [],
+        following: [],
+        posts: [],
+        has_more_followers: false,
+        has_more_following: false,
+        partial: true,
+        skipped: ['followers', 'following', 'posts'],
+        error_detail: 'user_id não encontrado — apenas contagens disponíveis',
+      });
+    }
+
+    console.log(`[collect-monitored] @${targetUsername} user_id=${targetUserId} seguidores=${profileData.followers_count}`);
+    collectionProgress.set(token, {
+      active: true, step: 'profile',
+      message: `@${targetUsername} — ${profileData.followers_count} seg, ${profileData.following_count} snd. Iniciando coleta...`,
+      pct: 15
+    });
+
+    await sleep(2000 + Math.random() * 2000);
+
+    // 2. Seguidores
+    let fr = { items: [], hasMore: false };
+    if (doFollowers) {
+      collectionProgress.set(token, { active: true, step: 'followers', message: `@${targetUsername} — coletando seguidores...`, pct: 20 });
+      console.log(`[collect-monitored] buscando seguidores de @${targetUsername} (id=${targetUserId})...`);
+      fr = await webPaginateFeed(
+        `/friendships/${targetUserId}/followers/?count=50`, cookieStr, 'users', 10000, effectiveUA, webOnly,
+        (n) => collectionProgress.set(token, { active: true, step: 'followers', message: `@${targetUsername} — seguidores: ${n} lidos...`, pct: 20 + Math.min(Math.floor(n / 80), 25) }),
+        false,
+        null,
+        `mon:${targetUserId}:followers`
+      );
+      console.log(`[collect-monitored] ${fr.items.length} seguidores de @${targetUsername}`);
+      collectionProgress.set(token, { active: true, step: 'followers_done', message: `@${targetUsername} — ${fr.items.length} seguidores. Continuando...`, pct: 45 });
+      if (doFollowing || doPosts) await sleep(4000 + Math.random() * 4000);
+    }
+
+    // 3. Seguindo
+    let fg = { items: [], hasMore: false };
+    if (doFollowing) {
+      collectionProgress.set(token, { active: true, step: 'following', message: `@${targetUsername} — coletando seguindo...`, pct: 50 });
+      console.log(`[collect-monitored] buscando seguindo de @${targetUsername} (id=${targetUserId})...`);
+      fg = await webPaginateFeed(
+        `/friendships/${targetUserId}/following/?count=50`, cookieStr, 'users', 10000, effectiveUA, webOnly,
+        (n) => collectionProgress.set(token, { active: true, step: 'following', message: `@${targetUsername} — seguindo: ${n} lidos...`, pct: 50 + Math.min(Math.floor(n / 80), 23) }),
+        false,
+        null,
+        `mon:${targetUserId}:following`
+      );
+      console.log(`[collect-monitored] ${fg.items.length} seguindo de @${targetUsername}`);
+      collectionProgress.set(token, { active: true, step: 'following_done', message: `@${targetUsername} — ${fg.items.length} seguindo. Continuando...`, pct: 76 });
+      if (doPosts) await sleep(4000 + Math.random() * 4000);
+    }
+
+    // 4. Posts
+    let pr = { items: [], hasMore: false };
+    if (doPosts) {
+      collectionProgress.set(token, { active: true, step: 'posts', message: `@${targetUsername} — coletando posts...`, pct: 80 });
+      console.log(`[collect-monitored] buscando posts de @${targetUsername} (id=${targetUserId})...`);
+      pr = await webPaginateFeed(
+        `/feed/user/${targetUserId}/?count=33`, cookieStr, 'profile_grid_items', 100, effectiveUA, webOnly,
+        (n) => collectionProgress.set(token, { active: true, step: 'posts', message: `@${targetUsername} — posts: ${n} lidos...`, pct: 80 + Math.min(n, 12) }),
+        true
+      );
+      console.log(`[collect-monitored] ${pr.items.length} posts de @${targetUsername}`);
+    }
+
+    const posts = pr.items.map(raw => {
+      const p = raw.media || raw;
+      return {
+        post_id: String(p.id || p.pk || ''),
+        caption: p.caption?.text || '',
+        media_url: p.image_versions2?.candidates?.[0]?.url || p.carousel_media?.[0]?.image_versions2?.candidates?.[0]?.url || '',
+        created_at: (p.taken_at || 0) * 1000,
+        likes_count: p.like_count || 0,
+        comments_count: p.comment_count || 0,
+        likers_list: [],
+      };
+    });
+
+    // 5. Curtidas por post
+    if (doPosts && posts.length > 0) {
+      collectionProgress.set(token, { active: true, step: 'likers', message: `@${targetUsername} — buscando curtidas (0/${posts.length} posts)...`, pct: 88 });
+      let likersOk = 0;
+      for (let i = 0; i < posts.length; i++) {
+        const post = posts[i];
+        const mediaId = post.post_id.split('_')[0];
+        try {
+          const likersData = await igGetSafe(`/media/${mediaId}/likers/`, cookieStr, effectiveUA, webOnly, 1, true);
+          if (Array.isArray(likersData?.users) && likersData.users.length > 0) {
+            post.likers_list = likersData.users.map(u => u.username).filter(Boolean);
+            likersOk++;
+          }
+        } catch (e) {
+          console.warn(`[collect-monitored] likers ${mediaId}: ${e.message}`);
+        }
+        collectionProgress.set(token, { active: true, step: 'likers', message: `@${targetUsername} — curtidas: ${i + 1}/${posts.length} posts...`, pct: 88 + Math.round(((i + 1) / posts.length) * 6) });
+        if (i < posts.length - 1) await sleep(2000 + Math.random() * 2000);
+      }
+      console.log(`[collect-monitored] Likers: ${likersOk}/${posts.length} posts`);
+    }
+
+    const partial = (doFollowers && fr.items.length === 0) || (doFollowing && fg.items.length === 0);
+    const skipped = [
+      ...(!doFollowers ? ['followers'] : []),
+      ...(!doFollowing ? ['following'] : []),
+      ...(!doPosts     ? ['posts']     : []),
+    ];
+
+    collectionProgress.delete(token);
+    return res.json({
+      collected_at: Date.now(),
+      account: {
+        pk: String(targetUserId),
+        username: targetUsername,
+        full_name: '',
+        avatar_url: profileData.avatar_url || '',
+        followers_count: profileData.followers_count || fr.items.length,
+        following_count: profileData.following_count || fg.items.length,
+        posts_count: profileData.posts_count || posts.length,
+      },
+      followers: fr.items.map(u => u.username),
+      following: fg.items.map(u => u.username),
+      posts,
+      has_more_followers: fr.hasMore,
+      has_more_following: fg.hasMore,
+      partial,
+      skipped,
+    });
+  } catch (err) {
+    collectionProgress.delete(token);
+    console.error('[collect-monitored]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

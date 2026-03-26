@@ -7,8 +7,10 @@ import {
   type MonitoredPost,
   type MonitoredPostSnapshot
 } from '../db/database'
+import { useAuth } from '../context/AuthContext'
 import { compareFollowerArrays } from '../services/snapshotService'
 import { runMockMonitoredCollection } from '../services/mockCollector'
+import { runRealMonitoredCollection } from '../services/realCollector'
 import { formatRelativeTime, formatDateTime } from '../utils/formatters'
 
 type MainTab = 'seguidores' | 'seguindo' | 'posts'
@@ -18,6 +20,7 @@ type FollowingTab = 'novos' | 'deixou'
 export default function MonitoredProfileDetailPage() {
   const { profileId } = useParams<{ profileId: string }>()
   const navigate = useNavigate()
+  const { accountId } = useAuth()
   const profId = Number(profileId)
 
   const [profile, setProfile] = useState<MonitoredProfile | null>(null)
@@ -66,16 +69,26 @@ export default function MonitoredProfileDetailPage() {
     setCollectionMsg('')
 
     try {
-      const result = await runMockMonitoredCollection(profId)
+      let result: { newFollowers: string[]; lostFollowers: string[]; newFollowing: string[]; lostFollowing: string[] }
+
+      if (accountId) {
+        // Coleta real via servidor
+        result = await runRealMonitoredCollection(profId, accountId)
+      } else {
+        // Fallback para dados mock quando não há conta conectada
+        result = await runMockMonitoredCollection(profId)
+      }
+
       const total = result.newFollowers.length + result.lostFollowers.length +
         result.newFollowing.length + result.lostFollowing.length
-      setCollectionMsg(`✅ Coleta concluída — ${total} mudança(s) nos seguidores`)
+      setCollectionMsg(`✅ Coleta concluída — ${total} mudança(s) detectada(s)`)
       await loadData()
-    } catch {
-      setCollectionMsg('❌ Erro na coleta')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro na coleta'
+      setCollectionMsg(`❌ ${msg}`)
     } finally {
       setCollecting(false)
-      setTimeout(() => setCollectionMsg(''), 3000)
+      setTimeout(() => setCollectionMsg(''), 5000)
     }
   }
 

@@ -159,6 +159,13 @@ export const api = {
     return get<ProfileSummary>(`/profile/${encodeURIComponent(username)}`, sessionToken)
   },
 
+  /** Coleta dados de um perfil monitorado (conta de outro usuário). mode = 'followers,following,posts' */
+  collectMonitored(sessionToken: string, username: string, mode?: string) {
+    const params = new URLSearchParams({ username })
+    if (mode) params.set('mode', mode)
+    return get<CollectResponse>(`/collect-monitored?${params.toString()}`, sessionToken)
+  },
+
   /** Remove sessão do servidor */
   async logout(sessionToken: string): Promise<void> {
     try {
