@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useCollection } from '../context/CollectionContext'
 import { ProfilePopupProvider } from '../context/ProfilePopupContext'
 import ProfilePopup from './ProfilePopup'
 import { db } from '../db/database'
@@ -8,6 +9,8 @@ import { db } from '../db/database'
 export default function AppLayout() {
   const { logout, accountId } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const { collecting, job: collectionJob, collectProgress } = useCollection()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [igUsername, setIgUsername] = useState('')
   const [igAvatar, setIgAvatar] = useState('')
@@ -107,6 +110,46 @@ export default function AppLayout() {
             ☰
           </button>
         </div>
+        {/* Banner de coleta em andamento (visível ao navegar para outra página) */}
+        {collecting && collectionJob && !location.pathname.includes(`/monitored/${collectionJob.profId}`) && (
+          <div style={{
+            background: 'rgba(102,126,234,0.12)',
+            border: '1px solid rgba(102,126,234,0.3)',
+            borderRadius: 10,
+            padding: '10px 16px',
+            marginBottom: 16,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}>
+            <div className="spinner" style={{ width: 14, height: 14, flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-blue)' }}>
+              Coletando @{collectionJob.username}...
+            </span>
+            {collectProgress && (
+              <>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {collectProgress.message}
+                </span>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 80, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${collectProgress.pct}%`,
+                      background: 'linear-gradient(90deg, #667eea, #764ba2)',
+                      borderRadius: 2,
+                      transition: 'width 0.6s ease',
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                    {collectProgress.pct}%
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <Outlet />
       </main>
       <ProfilePopup />

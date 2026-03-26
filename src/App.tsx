@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { CollectionProvider } from './context/CollectionContext'
 import AppLayout from './components/AppLayout'
 import SetupPage from './pages/SetupPage'
 import DashboardPage from './pages/DashboardPage'
@@ -63,7 +64,9 @@ export default function App() {
   return (
     <HashRouter>
       <AuthProvider>
-        <AppRoutes />
+        <CollectionProvider>
+          <AppRoutes />
+        </CollectionProvider>
       </AuthProvider>
     </HashRouter>
   )

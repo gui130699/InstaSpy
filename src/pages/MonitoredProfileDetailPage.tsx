@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   db,
@@ -8,10 +8,10 @@ import {
   type MonitoredPostSnapshot
 } from '../db/database'
 import { useAuth } from '../context/AuthContext'
+import { useCollection } from '../context/CollectionContext'
 import { compareFollowerArrays } from '../services/snapshotService'
 import { runMockMonitoredCollection } from '../services/mockCollector'
-import { runRealMonitoredCollection } from '../services/realCollector'
-import { api, proxyAvatarUrl } from '../services/apiClient'
+import { proxyAvatarUrl } from '../services/apiClient'
 import { formatRelativeTime, formatDateTime } from '../utils/formatters'
 
 type MainTab = 'seguidores' | 'seguindo' | 'posts'
@@ -28,9 +28,18 @@ export default function MonitoredProfileDetailPage() {
   const [snapshots, setSnapshots] = useState<MonitoredSnapshot[]>([])
   const [posts, setPosts] = useState<MonitoredPost[]>([])
   const [postSnapsMap, setPostSnapsMap] = useState<Map<string, MonitoredPostSnapshot[]>>(new Map())
-  const [collecting, setCollecting] = useState(false)
-  const [collectionMsg, setCollectionMsg] = useState('')
-  const [collectProgress, setCollectProgress] = useState<{ step: string; message: string; pct: number; latestUsers?: string[] } | null>(null)
+  const {
+    job: collectionJob,
+    collecting: globalCollecting,
+    collectionMsg,
+    collectProgress,
+    lastResult,
+    startCollection,
+    clearMsg
+  } = useCollection()
+
+  const collecting = globalCollecting && collectionJob?.profId === profId
+
   const [collectModes, setCollectModes] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem(`collect_modes_${profId}`)
@@ -85,50 +94,29 @@ export default function MonitoredProfileDetailPage() {
     loadData()
   }, [loadData])
 
-  // Polling do progresso durante coleta
+  // Recarrega dados quando a coleta deste perfil termina
+  const prevResult = useRef<typeof lastResult>(null)
   useEffect(() => {
-    if (!collecting || !accountId) {
-      if (!collecting) setCollectProgress(null)
-      return
+    if (lastResult && lastResult !== prevResult.current && collectionJob?.profId === profId) {
+      prevResult.current = lastResult
+      loadData()
     }
-    const interval = setInterval(async () => {
-      const acc = await db.accounts.get(accountId)
-      if (!acc?.session_token) return
-      try {
-        const p = await api.getCollectProgress(acc.session_token)
-        if (p.active && p.step) {
-          setCollectProgress({ step: p.step, message: p.message ?? '', pct: p.pct ?? 0, latestUsers: p.latestUsers })
-        }
-      } catch { /* ignora */ }
-    }, 2000)
-    return () => clearInterval(interval)
-  }, [collecting, accountId])
+  }, [lastResult, collectionJob, profId, loadData])
 
   async function handleCollect() {
-    if (!profId || collecting) return
-    setCollecting(true)
-    setCollectionMsg('')
-
-    try {
-      let result: { newFollowers: string[]; lostFollowers: string[]; newFollowing: string[]; lostFollowing: string[] }
-
-      if (accountId) {
-        const modeParam = [...collectModes].join(',')
-        result = await runRealMonitoredCollection(profId, accountId, modeParam)
-      } else {
-        result = await runMockMonitoredCollection(profId)
-      }
-
-      const total = result.newFollowers.length + result.lostFollowers.length +
-        result.newFollowing.length + result.lostFollowing.length
-      setCollectionMsg(`✅ Coleta concluída — ${total} mudança(s) detectada(s)`)
-      await loadData()
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Erro na coleta'
-      setCollectionMsg(`❌ ${msg}`)
-    } finally {
-      setCollecting(false)
-      setTimeout(() => setCollectionMsg(''), 5000)
+    if (!profId || collecting || globalCollecting) return
+    if (accountId) {
+      const modeParam = [...collectModes].join(',')
+      startCollection(profId, profile?.username ?? '', accountId, modeParam)
+    } else {
+      // fallback mock
+      try {
+        const result = await runMockMonitoredCollection(profId)
+        const total = result.newFollowers.length + result.lostFollowers.length +
+          result.newFollowing.length + result.lostFollowing.length
+        await loadData()
+        console.info(`Mock: ${total} mudanças`)
+      } catch { /* ignora */ }
     }
   }
 
@@ -137,7 +125,7 @@ export default function MonitoredProfileDetailPage() {
     await db.monitored_snapshots.where('profile_id').equals(profId).delete()
     await db.monitored_posts.where('profile_id').equals(profId).delete()
     await db.monitored_post_snapshots.where('profile_id').equals(profId).delete()
-    setCollectionMsg('')
+    clearMsg()
     await loadData()
   }
 
