@@ -16,7 +16,7 @@ import { formatRelativeTime, formatDateTime } from '../utils/formatters'
 
 type MainTab = 'seguidores' | 'seguindo' | 'posts'
 type FollowerTab = 'todos' | 'novos' | 'perdidos'
-type FollowingTab = 'novos' | 'deixou'
+type FollowingTab = 'todos' | 'novos' | 'deixou'
 
 export default function MonitoredProfileDetailPage() {
   const { profileId } = useParams<{ profileId: string }>()
@@ -47,7 +47,7 @@ export default function MonitoredProfileDetailPage() {
 
   const [mainTab, setMainTab] = useState<MainTab>('seguidores')
   const [followerTab, setFollowerTab] = useState<FollowerTab>('todos')
-  const [followingTab, setFollowingTab] = useState<FollowingTab>('novos')
+  const [followingTab, setFollowingTab] = useState<FollowingTab>('todos')
   const [expandedPost, setExpandedPost] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
@@ -156,6 +156,7 @@ export default function MonitoredProfileDetailPage() {
 
   const followingList = (() => {
     if (!latest) return []
+    if (followingTab === 'todos') return latest.following_list ?? []
     if (followingTab === 'novos') return diff?.newFollowing ?? []
     return diff?.lostFollowing ?? []
   })()
@@ -414,7 +415,10 @@ export default function MonitoredProfileDetailPage() {
       {/* ===== TAB: SEGUINDO ===== */}
       {mainTab === 'seguindo' && (
         <div className="card">
-          <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+            <SubTabBtn active={followingTab === 'todos'} onClick={() => setFollowingTab('todos')}>
+              Todos ({latest?.following_list?.length ?? 0})
+            </SubTabBtn>
             <SubTabBtn active={followingTab === 'novos'} onClick={() => setFollowingTab('novos')} color="success">
               🔵 Novos seguindo ({diff?.newFollowing.length ?? 0})
             </SubTabBtn>
@@ -423,14 +427,11 @@ export default function MonitoredProfileDetailPage() {
             </SubTabBtn>
           </div>
 
-          <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-muted)' }}>
-            Total seguindo: <strong style={{ color: 'var(--text-primary)' }}>{latest?.following_count ?? 0}</strong>
-          </div>
-
           {followingList.length === 0 ? (
             <EmptyState
-              icon={followingTab === 'novos' ? '🔵' : '⚪'}
+              icon={followingTab === 'todos' ? '🔵' : followingTab === 'novos' ? '🔵' : '⚪'}
               msg={
+                followingTab === 'todos' ? 'Faça uma coleta para ver a lista de seguindo' :
                 followingTab === 'novos' ? 'Nenhum novo seguindo nesta coleta' :
                 'Não deixou de seguir ninguém nesta coleta'
               }
