@@ -223,7 +223,7 @@ export default function AppLayout() {
             )}
           </div>
         )}
-        <Outlet />
+        <Outlet key={accountId ?? 'none'} />
       </main>
       <ProfilePopup />
     </div>

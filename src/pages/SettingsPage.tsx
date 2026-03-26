@@ -59,6 +59,12 @@ export default function SettingsPage() {
         db.post_snapshots.where('account_id').equals(id).delete(),
         db.alerts.where('account_id').equals(id).delete(),
       ])
+      // Se removeu a conta ativa, troca para outra automaticamente
+      if (id === accountId) {
+        const remaining = accounts.filter(a => a.id !== id)
+        if (remaining.length > 0) switchAccount(remaining[0].id!)
+        else navigate('/setup')
+      }
       await refreshAccounts()
       setMsg('✅ Conta removida')
     } catch {
