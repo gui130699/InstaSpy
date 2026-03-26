@@ -1,0 +1,279 @@
+╔══════════════════════════════════════════════════════════════════╗
+║              INSTAMONITOR PWA — INSTRUÇÕES DE USO               ║
+║                   (atualizado: 24/03/2026 v2)                   ║
+╚══════════════════════════════════════════════════════════════════╝
+
+
+════════════════════════════════════════
+  PRÉ-REQUISITOS
+════════════════════════════════════════
+
+  - Node.js instalado (versão 18 ou superior)
+    Download: https://nodejs.org
+
+  - Um terminal (PowerShell, CMD ou Terminal do VS Code)
+
+  ATENÇÃO: O arquivo .npmrc na raiz do projeto já contém
+  "legacy-peer-deps=true" para compatibilidade entre o
+  Vite 8 e o vite-plugin-pwa. Não remova este arquivo.
+
+
+════════════════════════════════════════
+  AVISO IMPORTANTE — SESSÕES DO SERVIDOR
+════════════════════════════════════════
+
+  O servidor backend guarda as sessões do Instagram na MEMÓRIA.
+  Isso significa:
+
+  ❗ Se o servidor for reiniciado, a sessão é perdida.
+     Você verá "Sessão expirada" no app — vá em:
+     Configurações → "Reconectar Instagram"
+
+  ❗ O servidor PRECISA estar rodando antes de abrir o app.
+     Se você abrir o app com o servidor offline, o indicador
+     na tela de login ficará vermelho 🔴. Inicie o servidor
+     e aguarde ele ficar verde 🟢 antes de tentar logar.
+
+  ❗ O servidor aceita conexões apenas de localhost.
+     Não é necessário abrir portas no roteador.
+
+
+════════════════════════════════════════
+  MODO DEMO (sem senha do Instagram)
+════════════════════════════════════════
+
+  Ideal para testar o app com dados simulados.
+  Não precisa de senha nem do servidor backend.
+
+  PASSO 1 — Abrir o terminal na pasta do projeto:
+  ─────────────────────────────────────────────
+    cd "Área de Trabalho\InstagranPWA"
+
+  PASSO 2 — Instalar dependências (só na primeira vez):
+  ─────────────────────────────────────────────────────
+    npm install
+
+  PASSO 3 — Iniciar o app:
+  ────────────────────────
+    npm run dev
+
+    O terminal exibirá:
+      ➜  Local:   http://localhost:5173/
+
+  PASSO 4 — Abrir no navegador:
+  ─────────────────────────────
+    Acesse: http://localhost:5173
+
+  PASSO 5 — Criar sua conta no app:
+  ──────────────────────────────────
+    1. Na tela de Login, clique em "Criar conta"
+    2. Preencha nome, e-mail e senha (dados locais, não vão a lugar nenhum)
+    3. Clique em "Criar conta"
+
+  PASSO 6 — Conectar perfil (modo demo):
+  ───────────────────────────────────────
+    1. Na tela "Conectar Instagram":
+       - Informe um nome de usuário qualquer (ex: meuusuario)
+       - Deixe o campo SENHA em branco
+    2. Clique em "Entrar em Modo Demo"
+    3. Dados simulados serão gerados automaticamente
+    4. Você será redirecionado ao Dashboard
+
+  PASSO 7 — Usar o app:
+  ──────────────────────
+    - Dashboard:  visão geral de seguidores, seguindo e alertas
+    - Seguidores: histórico detalhado de quem seguiu/deixou de seguir
+    - Posts:      lista de postagens com contagem de curtidas
+    - Monitorados: perfis externos que você quer vigiar
+    - Alertas:    linha do tempo de todos os eventos
+    - Configurações: exportar dados, limpar histórico
+
+    Clique em "Coletar agora" no Dashboard para gerar nova coleta de dados.
+
+
+════════════════════════════════════════
+  MODO REAL — 3 FORMAS DE LOGAR
+════════════════════════════════════════
+
+  OPÇÃO A: Login pelo SITE do Instagram ← RECOMENDADO
+  ─────────────────────────────────────────────────────
+  Você não precisa digitar a senha no app. Fluxo:
+
+  1. Inicie o servidor backend (veja Passo 4 abaixo)
+  2. No app, clique em "🌐 Login pelo site do Instagram"
+  3. Uma janela do Instagram abrirá — faça login lá normalmente
+  4. Após entrar, pressione F12 no navegador
+  5. Vá em: Application → Cookies → https://www.instagram.com
+  6. Encontre "sessionid" e copie o valor da coluna "Value"
+  7. Cole no app e clique em "Conectar"
+
+  OPÇÃO B: Login com usuário e senha
+  ────────────────────────────────────
+  Digite seu usuário e senha do Instagram diretamente no app.
+  Se sua conta tiver 2FA, um código será solicitado.
+
+  OPÇÃO C: Modo Demo (sem Instagram)
+  ────────────────────────────────────
+  Deixe a senha em branco — dados simulados serão gerados.
+
+
+════════════════════════════════════════
+  MODO REAL (passo a passo completo)
+════════════════════════════════════════
+
+  Usa seus dados reais do Instagram.
+  Requer o servidor backend rodando localmente.
+  Suas credenciais NUNCA saem do seu computador.
+
+  PASSO 1 — Abrir o terminal na pasta do projeto:
+  ─────────────────────────────────────────────
+    cd "Área de Trabalho\InstagranPWA"
+
+  PASSO 2 — Instalar dependências do frontend (só na primeira vez):
+  ─────────────────────────────────────────────────────────────────
+    npm install
+
+  PASSO 3 — Instalar dependências do servidor (só na primeira vez):
+  ─────────────────────────────────────────────────────────────────
+    cd server
+    npm install
+    cd ..
+
+  PASSO 4 — Iniciar o servidor backend:
+  ──────────────────────────────────────
+    Abra UM terminal e execute:
+
+      cd server
+      node index.js
+
+    Você verá:
+      ─────────────────────────────────────────────
+        InstaMonitor Backend
+        http://localhost:3001
+      ─────────────────────────────────────────────
+
+    IMPORTANTE: Inicie o servidor ANTES de abrir o app
+    e mantenha este terminal aberto durante todo o uso!
+
+  PASSO 5 — Iniciar o app (em outro terminal):
+  ─────────────────────────────────────────────
+    npm run dev
+
+    Acesse: http://localhost:5173
+
+  PASSO 6 — Criar sua conta no app:
+  ──────────────────────────────────
+    1. Na tela de Login, clique em "Criar conta"
+    2. Preencha nome, e-mail e senha (conta local do app)
+    3. Clique em "Criar conta"
+
+  PASSO 7 — Conectar com Instagram real:
+  ───────────────────────────────────────
+    1. Na tela "Conectar Instagram":
+       - Aguarde o indicador de servidor ficar verde 🟢
+         (aparece assim que você digitar a senha)
+       - Informe seu usuário do Instagram (sem @)
+       - Informe sua senha do Instagram
+    2. Clique em "Conectar com Instagram"
+    3. Se sua conta tiver verificação em 2 etapas:
+       - Um código será enviado por SMS ou e-mail
+       - Digite o código na tela que aparecer
+    4. Se o Instagram pedir verificação de segurança:
+       - Um código será enviado para o contato cadastrado
+       - Digite o código na tela que aparecer
+    5. Após validação, você será redirecionado ao Dashboard
+
+  PASSO 8 — Coletar dados reais:
+  ────────────────────────────────
+    No Dashboard, clique em "Coletar agora".
+    O app irá buscar:
+      - Seus seguidores (até 1000)
+      - Quem você segue (até 1000)
+      - Seus posts recentes (até 12)
+      - Curtidas dos últimos 6 posts
+
+    A coleta pode levar 1-2 minutos devido aos
+    intervalos necessários para não ser bloqueado.
+
+  OBS: O badge no Dashboard mostrará "REAL" quando
+       conectado com dados reais, ou "DEMO" no modo simulado.
+
+
+════════════════════════════════════════
+  INSTALAR COMO APP (PWA)
+════════════════════════════════════════
+
+  No Google Chrome ou Edge, com o app aberto:
+
+  1. Clique no ícone de instalação na barra de endereço
+     (ícone de computador com seta para baixo)
+  2. Clique em "Instalar"
+  3. O app abrirá como janela independente
+
+  No celular (Android/iOS):
+  1. Abra o endereço no navegador
+  2. Toque em "Compartilhar" → "Adicionar à Tela de Início"
+  3. O app aparecerá como ícone na tela inicial
+
+
+════════════════════════════════════════
+  SOLUÇÃO DE PROBLEMAS
+════════════════════════════════════════
+
+  PROBLEMA: "Servidor backend não encontrado"
+  SOLUÇÃO:  Inicie o servidor ANTES de tentar fazer login:
+              cd server
+              node index.js
+            Após iniciar, volte ao app e aguarde o indicador
+            ficar VERDE 🟢 antes de clicar em "Conectar".
+            Se já tentou logar antes, apenas clique novamente.
+
+  PROBLEMA: Indicador vermelho 🔴 na tela de login
+  SOLUÇÃO:  O servidor não está rodando. Execute no terminal:
+              cd server
+              node index.js
+            Aguarde o indicador ficar verde antes de logar.
+
+  PROBLEMA: "Sessão expirada. Faça login novamente."
+  SOLUÇÃO:  O servidor foi reiniciado (sessões ficam em memória).
+            Vá em Configurações → "Reconectar Instagram".
+
+  PROBLEMA: Erro de login "Checkpoint required"
+  SOLUÇÃO:  O Instagram detectou acesso incomum.
+            Um código será enviado; siga a tela de verificação.
+
+  PROBLEMA: Página em branco ao abrir o app
+  SOLUÇÃO:  Verifique se "npm run dev" está rodando.
+            Acesse exatamente: http://localhost:5173
+
+  PROBLEMA: Dados não atualizam após coletar
+  SOLUÇÃO:  Aguarde a mensagem "✅ Coleta concluída" aparecer.
+            A coleta real leva aproximadamente 1-2 minutos.
+
+
+════════════════════════════════════════
+  ESTRUTURA DE ARQUIVOS
+════════════════════════════════════════
+
+  InstagranPWA/
+  ├── src/              → Código do app (React + TypeScript)
+  ├── server/           → Servidor backend (Node.js + Express)
+  │   ├── index.js      → Arquivo principal do servidor
+  │   └── package.json  → Dependências do servidor
+  ├── public/           → Ícones e manifest PWA
+  ├── dist/             → Build de produção (gerado por "npm run build")
+  ├── .npmrc            → legacy-peer-deps=true (não remover!)
+  ├── package.json      → Dependências do frontend
+  └── INSTRUÇÕES.txt    → Este arquivo
+
+
+════════════════════════════════════════
+  COMANDOS RÁPIDOS
+════════════════════════════════════════
+
+  Iniciar app (dev):        npm run dev
+  Build de produção:        npm run build
+  Iniciar servidor:         cd server && node index.js
+  Instalar tudo:            npm install && cd server && npm install
+
+══════════════════════════════════════════════════════════════════
