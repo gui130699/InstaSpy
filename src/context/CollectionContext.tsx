@@ -3,6 +3,8 @@ import { api } from '../services/apiClient'
 import { runRealMonitoredCollection, runRealCollection } from '../services/realCollector'
 import { db } from '../db/database'
 
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
 export interface CollectionProgress {
   step: string
   message: string
@@ -22,15 +24,13 @@ export interface CollectionResult {
   lostFollowing: string[]
 }
 
-// ─── Fila de tarefas ──────────────────────────────────────────────────────────
-
 export type TaskStatus = 'pending' | 'in-progress' | 'done' | 'error'
 export type TaskType = 'own' | 'monitored'
 
 export interface TaskItem {
   id: string
   type: TaskType
-  profId?: number      // apenas para monitored
+  profId?: number
   accountId: number
   username: string
   mode: string
@@ -41,10 +41,9 @@ export interface TaskItem {
   result?: { total: number }
 }
 
-// ─── Tipo do contexto ─────────────────────────────────────────────────────────
+// ─── Contexto ─────────────────────────────────────────────────────────────────
 
 interface CollectionContextType {
-  // Compatibilidade com MonitoredProfileDetailPage
   job: CollectionJob | null
   collecting: boolean
   collectionMsg: string
@@ -52,7 +51,6 @@ interface CollectionContextType {
   lastResult: CollectionResult | null
   startCollection: (profId: number, username: string, accountId: number, modeParam: string) => void
   clearMsg: () => void
-  // Fila de tarefas
   tasks: TaskItem[]
   enqueueBatch: (items: Omit<TaskItem, 'id' | 'status' | 'message'>[]) => void
   clearCompleted: () => void
@@ -60,48 +58,53 @@ interface CollectionContextType {
 }
 
 const CollectionContext = createContext<CollectionContextType>({
-  job: null,
-  collecting: false,
-  collectionMsg: '',
-  collectProgress: null,
-  lastResult: null,
-  startCollection: () => {},
-  clearMsg: () => {},
-  tasks: [],
-  enqueueBatch: () => {},
-  clearCompleted: () => {},
-  cancelPending: () => {}
+  job: null, collecting: false, collectionMsg: '', collectProgress: null, lastResult: null,
+  startCollection: () => {}, clearMsg: () => {},
+  tasks: [], enqueueBatch: () => {}, clearCompleted: () => {}, cancelPending: () => {}
 })
 
-export function useCollection() {
-  return useContext(CollectionContext)
-}
+export function useCollection() { return useContext(CollectionContext) }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
-
+/**
+ * Arquitetura: fila imperativa (refs) + estado React só para renderização.
+ *
+ * Bug anterior: tasksRef era sincronizado via useEffect, mas processQueue era
+ * chamado via setTimeout antes do React re-renderizar, deixando a ref vazia.
+ * Agora pendingQueue.current é mutado diretamente — zero dependência de renders.
+ */
 export function CollectionProvider({ children }: { children: ReactNode }) {
+
+  // ── Estado React — apenas para UI ─────────────────────────────────────────
+  const [tasks, setTasks] = useState<TaskItem[]>([])
   const [job, setJob] = useState<CollectionJob | null>(null)
   const [collecting, setCollecting] = useState(false)
   const [collectionMsg, setCollectionMsg] = useState('')
   const [collectProgress, setCollectProgress] = useState<CollectionProgress | null>(null)
   const [lastResult, setLastResult] = useState<CollectionResult | null>(null)
-  const [tasks, setTasks] = useState<TaskItem[]>([])
 
+  // ── Refs imperativas — não dependem do ciclo de render ────────────────────
   const isProcessing = useRef(false)
+  const pendingQueue = useRef<TaskItem[]>([])           // fila de execução pendente
+  const allTasks = useRef(new Map<string, TaskItem>())  // todos os tasks (para exibir)
   const accountIdRef = useRef<number | null>(null)
-  const tasksRef = useRef<TaskItem[]>([])
 
-  // Mantém ref sincronizada com o state
-  useEffect(() => {
-    tasksRef.current = tasks
-  }, [tasks])
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function syncDisplay() {
+    setTasks([...allTasks.current.values()])
+  }
+
+  function updateTask(id: string, updates: Partial<TaskItem>) {
+    const t = allTasks.current.get(id)
+    if (t) {
+      allTasks.current.set(id, { ...t, ...updates })
+      syncDisplay()
+    }
+  }
 
   // ── Polling de progresso ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!collecting) {
-      setCollectProgress(null)
-      return
-    }
+    if (!collecting) { setCollectProgress(null); return }
     const interval = setInterval(async () => {
       const accId = accountIdRef.current
       if (!accId) return
@@ -117,107 +120,105 @@ export function CollectionProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval)
   }, [collecting])
 
-  // ── Processar fila ────────────────────────────────────────────────────────
+  // ── Processador de fila — opera nas refs, não no React state ──────────────
   const processQueue = useCallback(async () => {
     if (isProcessing.current) return
     isProcessing.current = true
 
-    while (true) {
-      const pending = tasksRef.current.find(t => t.status === 'pending')
-      if (!pending) break
+    while (pendingQueue.current.length > 0) {
+      const task = pendingQueue.current.shift()!
 
-      // Marcar como in-progress
-      accountIdRef.current = pending.accountId
-      setTasks(prev => prev.map(t => t.id === pending.id
-        ? { ...t, status: 'in-progress', startedAt: Date.now() }
-        : t
-      ))
-      setJob({ profId: pending.profId ?? 0, username: pending.username })
+      accountIdRef.current = task.accountId
+      updateTask(task.id, { status: 'in-progress', startedAt: Date.now() })
+      setJob({ profId: task.profId ?? 0, username: task.username })
       setCollecting(true)
       setCollectionMsg('')
       setLastResult(null)
 
       try {
-        if (pending.type === 'monitored' && pending.profId) {
-          const result = await runRealMonitoredCollection(pending.profId, pending.accountId, pending.mode)
+        if (task.type === 'monitored' && task.profId != null) {
+          const result = await runRealMonitoredCollection(task.profId, task.accountId, task.mode)
           const total = result.newFollowers.length + result.lostFollowers.length +
             result.newFollowing.length + result.lostFollowing.length
           setLastResult(result)
           const msg = `✅ ${total} mudança(s)`
-          setCollectionMsg(`✅ @${pending.username} — ${total} mudança(s)`)
-          setTasks(prev => prev.map(t => t.id === pending.id
-            ? { ...t, status: 'done', message: msg, finishedAt: Date.now(), result: { total } }
-            : t
-          ))
+          setCollectionMsg(`✅ @${task.username} — ${total} mudança(s)`)
+          updateTask(task.id, { status: 'done', message: msg, finishedAt: Date.now(), result: { total } })
         } else {
-          // own profile
-          const result = await runRealCollection(pending.accountId, pending.mode)
-          const total = result.followersDiff.newFollowers.length + result.followersDiff.lostFollowers.length +
+          const result = await runRealCollection(task.accountId, task.mode)
+          const total =
+            result.followersDiff.newFollowers.length + result.followersDiff.lostFollowers.length +
             result.likerDiffs.reduce((a, d) => a + d.newLikers.length + d.lostLikers.length, 0)
-          const ownResult: CollectionResult = {
+          setLastResult({
             newFollowers: result.followersDiff.newFollowers,
             lostFollowers: result.followersDiff.lostFollowers,
             newFollowing: result.followersDiff.newFollowing,
             lostFollowing: result.followersDiff.lostFollowing
-          }
-          setLastResult(ownResult)
+          })
           const msg = `✅ ${total} evento(s)`
-          setCollectionMsg(`✅ @${pending.username} — ${total} evento(s)`)
-          setTasks(prev => prev.map(t => t.id === pending.id
-            ? { ...t, status: 'done', message: msg, finishedAt: Date.now(), result: { total } }
-            : t
-          ))
+          setCollectionMsg(`✅ @${task.username} — ${total} evento(s)`)
+          updateTask(task.id, { status: 'done', message: msg, finishedAt: Date.now(), result: { total } })
         }
       } catch (err) {
         const msg = `❌ ${err instanceof Error ? err.message : 'Erro'}`
         setCollectionMsg(msg)
-        setTasks(prev => prev.map(t => t.id === pending.id
-          ? { ...t, status: 'error', message: msg, finishedAt: Date.now() }
-          : t
-        ))
+        updateTask(task.id, { status: 'error', message: msg, finishedAt: Date.now() })
       }
 
-      // Pequena pausa entre tarefas para não sobrecarregar
-      await new Promise(r => setTimeout(r, 800))
+      // Pausa entre tarefas para não sobrecarregar o Instagram
+      if (pendingQueue.current.length > 0) {
+        await new Promise(r => setTimeout(r, 1500))
+      }
     }
 
     setCollecting(false)
     setJob(null)
     isProcessing.current = false
     setTimeout(() => setCollectionMsg(''), 6000)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── startCollection (compatibilidade MonitoredProfileDetailPage) ──────────
+  // ── API pública ───────────────────────────────────────────────────────────
+
   const startCollection = useCallback((profId: number, username: string, accountId: number, modeParam: string) => {
     const id = `mon-${profId}-${Date.now()}`
     const task: TaskItem = {
-      id, type: 'monitored', profId, accountId, username, mode: modeParam,
-      status: 'pending', message: ''
+      id, type: 'monitored', profId, accountId, username,
+      mode: modeParam, status: 'pending', message: ''
     }
-    setTasks(prev => [...prev, task])
-    setTimeout(processQueue, 0)
+    allTasks.current.set(id, task)
+    pendingQueue.current.push(task)
+    syncDisplay()
+    processQueue()
   }, [processQueue])
 
-  // ── Enfileirar lote ───────────────────────────────────────────────────────
   const enqueueBatch = useCallback((items: Omit<TaskItem, 'id' | 'status' | 'message'>[]) => {
-    const newTasks: TaskItem[] = items.map((item, i) => ({
-      ...item,
-      id: `batch-${Date.now()}-${i}`,
-      status: 'pending',
-      message: ''
-    }))
-    setTasks(prev => [...prev, ...newTasks])
-    setTimeout(processQueue, 0)
+    items.forEach((item, i) => {
+      const id = `batch-${Date.now()}-${i}`
+      const task: TaskItem = { ...item, id, status: 'pending', message: '' }
+      allTasks.current.set(id, task)
+      pendingQueue.current.push(task)
+    })
+    syncDisplay()
+    processQueue()
   }, [processQueue])
 
   function clearMsg() { setCollectionMsg('') }
 
   function clearCompleted() {
-    setTasks(prev => prev.filter(t => t.status === 'pending' || t.status === 'in-progress'))
+    for (const [id, t] of allTasks.current.entries()) {
+      if (t.status === 'done' || t.status === 'error') allTasks.current.delete(id)
+    }
+    syncDisplay()
   }
 
   function cancelPending(id: string) {
-    setTasks(prev => prev.filter(t => !(t.id === id && t.status === 'pending')))
+    const t = allTasks.current.get(id)
+    if (t?.status === 'pending') {
+      allTasks.current.delete(id)
+      pendingQueue.current = pendingQueue.current.filter(q => q.id !== id)
+      syncDisplay()
+    }
   }
 
   return (
