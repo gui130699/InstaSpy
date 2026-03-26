@@ -1,17 +1,28 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { ProfilePopupProvider } from '../context/ProfilePopupContext'
 import ProfilePopup from './ProfilePopup'
+import { db } from '../db/database'
 
 export default function AppLayout() {
-  const { session, logout } = useAuth()
+  const { logout, accountId } = useAuth()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [igUsername, setIgUsername] = useState('')
+  const [igAvatar, setIgAvatar] = useState('')
+
+  useEffect(() => {
+    if (!accountId) return
+    db.accounts.get(accountId).then(acc => {
+      if (acc?.username) setIgUsername(acc.username)
+      if (acc?.avatar_url) setIgAvatar(acc.avatar_url)
+    })
+  }, [accountId])
 
   function handleLogout() {
     logout()
-    navigate('/login')
+    navigate('/setup')
   }
 
   const navItems = [
@@ -20,6 +31,7 @@ export default function AppLayout() {
     { to: '/following', icon: '➡️', label: 'Seguindo' },
     { to: '/posts', icon: '📷', label: 'Posts' },
     { to: '/monitored', icon: '🔍', label: 'Perfis Monitorados' },
+    { to: '/ranking', icon: '🏆', label: 'Ranking' },
     { to: '/alerts', icon: '🔔', label: 'Alertas' },
     { to: '/settings', icon: '⚙️', label: 'Configurações' }
   ]
@@ -63,16 +75,25 @@ export default function AppLayout() {
 
         <div className="sidebar-footer">
           <div className="user-info">
-            <div className="user-avatar">
-              {session?.nome?.charAt(0).toUpperCase() ?? 'U'}
-            </div>
+            {igAvatar ? (
+              <img
+                src={igAvatar}
+                alt={igUsername}
+                style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+              />
+            ) : (
+              <div className="user-avatar">
+                {igUsername?.charAt(0).toUpperCase() ?? 'IG'}
+              </div>
+            )}
             <div className="user-details">
-              <div className="user-name">{session?.nome ?? 'Usuário'}</div>
-              <div className="user-email">{session?.email ?? ''}</div>
+              <div className="user-name">@{igUsername || 'conta'}</div>
+              <div className="user-email">Instagram</div>
             </div>
           </div>
           <button className="btn-logout" onClick={handleLogout}>
-            🚪 Sair
+            🛊troca
           </button>
         </div>
       </aside>

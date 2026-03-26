@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { db } from '../db/database'
 import { useAuth } from '../context/AuthContext'
-import { initMockData } from '../services/mockCollector'
 import { api } from '../services/apiClient'
 import type { LoginResponse } from '../services/apiClient'
 
@@ -53,32 +52,6 @@ export default function SetupPage() {
     }
     setAccountId(savedId)
     navigate('/dashboard')
-  }
-
-  async function setupDemo() {
-    if (!session) return
-    const u = prompt('Nome de usuário para o modo demo:')
-    if (!u?.trim()) return
-    const clean = u.trim().toLowerCase()
-    setLoading(true); setError('')
-    try {
-      const existing = await db.accounts.where('user_id').equals(session.userId).first()
-      let accId: number
-      if (existing) {
-        accId = existing.id!
-        await db.accounts.update(accId, { username: clean, last_sync: Date.now() })
-      } else {
-        accId = await db.accounts.add({
-          user_id: session.userId, username: clean,
-          session_token: `demo_${clean}_${Date.now()}`, created_at: Date.now()
-        })
-      }
-      await initMockData(accId)
-      setAccountId(accId)
-      navigate('/dashboard')
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Erro ao configurar')
-    } finally { setLoading(false) }
   }
 
   async function handleCookieLogin(e: React.FormEvent) {
@@ -157,13 +130,6 @@ export default function SetupPage() {
             {loading ? '⏳ Verificando...' : '✅ Conectar com Instagram'}
           </button>
         </form>
-
-        <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid var(--border-color)', textAlign: 'center' }}>
-          <button type="button" onClick={setupDemo}
-            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}>
-            Entrar em modo demo (dados simulados)
-          </button>
-        </div>
       </div>
     </div>
   )

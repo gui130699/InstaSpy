@@ -11,6 +11,7 @@ import MonitoredPage from './pages/MonitoredPage'
 import MonitoredProfileDetailPage from './pages/MonitoredProfileDetailPage'
 import AlertsPage from './pages/AlertsPage'
 import SettingsPage from './pages/SettingsPage'
+import RankingPage from './pages/RankingPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { accountId, loading } = useAuth()
@@ -49,6 +50,7 @@ function AppRoutes() {
         <Route path="posts/:postId" element={<PostDetailPage />} />
         <Route path="monitored" element={<MonitoredPage />} />
         <Route path="monitored/:profileId" element={<MonitoredProfileDetailPage />} />
+        <Route path="ranking" element={<RankingPage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
