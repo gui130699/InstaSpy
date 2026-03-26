@@ -828,7 +828,8 @@ app.get('/api/profile/:username', async (req, res) => {
     }
 
     // ── Sessão Web ─────────────────────────────────────────────────────────
-    const cookieStr = s.cookieStr;
+    // Enriquecer cookies com mid, csrftoken frescos antes de qualquer chamada
+    const cookieStr = await enrichWebCookies(s.cookieStr, s.ua || WEB_UA);
     const ua = s.ua || WEB_UA;
     let foundUserId = null;
     let foundAvatarUrl = '';
