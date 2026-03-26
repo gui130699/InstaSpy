@@ -32,6 +32,7 @@ interface AuthContextType {
   accountId: number | null
   loading: boolean
   setSession: (s: SessionData | null) => void
+  setAccountId: (id: number | null) => void
   logout: () => void
 }
 
@@ -40,6 +41,7 @@ const AuthContext = createContext<AuthContextType>({
   accountId: null,
   loading: true,
   setSession: () => {},
+  setAccountId: () => {},
   logout: () => {}
 })
 
@@ -81,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ session, accountId, loading, setSession, logout }}>
+    <AuthContext.Provider value={{ session, accountId, loading, setSession, setAccountId, logout }}>
       {children}
     </AuthContext.Provider>
   )

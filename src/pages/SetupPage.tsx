@@ -11,7 +11,7 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [serverStatus, setServerStatus] = useState<'checking' | 'online' | 'offline'>('checking')
-  const { session, setSession } = useAuth()
+  const { session, setSession, setAccountId } = useAuth()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -28,6 +28,7 @@ export default function SetupPage() {
   async function finishSetup(loginData: LoginResponse) {
     if (!session) return
     const existing = await db.accounts.where('user_id').equals(session.userId).first()
+    let savedId: number
     if (existing) {
       await db.accounts.update(existing.id!, {
         username: loginData.account.username,
@@ -37,8 +38,9 @@ export default function SetupPage() {
         avatar_url: loginData.account.avatar_url,
         last_sync: Date.now()
       })
+      savedId = existing.id!
     } else {
-      await db.accounts.add({
+      savedId = await db.accounts.add({
         user_id: session.userId,
         username: loginData.account.username,
         session_token: loginData.token,
@@ -47,9 +49,9 @@ export default function SetupPage() {
         avatar_url: loginData.account.avatar_url,
         created_at: Date.now(),
         last_sync: Date.now()
-      })
+      }) as number
     }
-    setSession(session)
+    setAccountId(savedId)
     navigate('/dashboard')
   }
 
@@ -72,7 +74,7 @@ export default function SetupPage() {
         })
       }
       await initMockData(accId)
-      setSession(session)
+      setAccountId(accId)
       navigate('/dashboard')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erro ao configurar')
