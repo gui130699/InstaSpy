@@ -167,7 +167,7 @@ export function CollectionProvider({ children }: { children: ReactNode }) {
 
       // Pausa entre tarefas para não sobrecarregar o Instagram
       if (pendingQueue.current.length > 0) {
-        await new Promise(r => setTimeout(r, 1500))
+        await new Promise(r => setTimeout(r, 3000))
       }
     }
 
@@ -181,6 +181,12 @@ export function CollectionProvider({ children }: { children: ReactNode }) {
   // ── API pública ───────────────────────────────────────────────────────────
 
   const startCollection = useCallback((profId: number, username: string, accountId: number, modeParam: string) => {
+    // Deduplicação: ignora se já existe tarefa pendente/em-progresso para este perfil
+    const duplicate = [...allTasks.current.values()].some(
+      t => t.profId === profId && (t.status === 'pending' || t.status === 'in-progress')
+    )
+    if (duplicate) return
+
     const id = `mon-${profId}-${Date.now()}`
     const task: TaskItem = {
       id, type: 'monitored', profId, accountId, username,
@@ -193,7 +199,16 @@ export function CollectionProvider({ children }: { children: ReactNode }) {
   }, [processQueue])
 
   const enqueueBatch = useCallback((items: Omit<TaskItem, 'id' | 'status' | 'message'>[]) => {
+    // IDs de perfis já pendentes/em-progresso para deduplicação
+    const activeProfIds = new Set(
+      [...allTasks.current.values()]
+        .filter(t => t.status === 'pending' || t.status === 'in-progress')
+        .map(t => t.profId)
+    )
     items.forEach((item, i) => {
+      // Pula se já há tarefa ativa para este perfil
+      if (item.profId != null && activeProfIds.has(item.profId)) return
+      activeProfIds.add(item.profId) // marca como agendado para este batch
       const id = `batch-${Date.now()}-${i}`
       const task: TaskItem = { ...item, id, status: 'pending', message: '' }
       allTasks.current.set(id, task)

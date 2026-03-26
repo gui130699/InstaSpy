@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { CollectionProvider } from './context/CollectionContext'
 import AppLayout from './components/AppLayout'
@@ -27,14 +27,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-function AppRoutes() {
+// Permite acesso a /setup?new=1 mesmo autenticado
+function SetupGuard() {
   const { accountId } = useAuth()
+  const [searchParams] = useSearchParams()
+  const isNew = searchParams.get('new') === '1'
+  if (accountId && !isNew) return <Navigate to="/dashboard" replace />
+  return <SetupPage />
+}
 
+function AppRoutes() {
   return (
     <Routes>
       <Route
         path="/setup"
-        element={accountId ? <Navigate to="/dashboard" replace /> : <SetupPage />}
+        element={<SetupGuard />}
       />
       <Route
         path="/"
