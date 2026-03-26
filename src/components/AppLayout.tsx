@@ -68,7 +68,7 @@ export default function AppLayout() {
 
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-logo">
-          <span>📊</span>
+          <span role="img" aria-label="logo">📊</span>
           <h1>InstaMonitor</h1>
         </div>
 
@@ -91,55 +91,57 @@ export default function AppLayout() {
           {showSwitcher && (
             <div style={{
               position: 'absolute',
-              bottom: 'calc(100% + 4px)',
+              bottom: 'calc(100% + 6px)',
               left: 0,
               right: 0,
-              background: 'var(--surface)',
-              border: '1px solid var(--border-color)',
-              borderRadius: 10,
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: 'var(--radius)',
               overflow: 'hidden',
               zIndex: 200,
-              boxShadow: '0 -4px 20px rgba(0,0,0,0.4)',
+              boxShadow: '0 -8px 32px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.06)',
             }}>
-              <div style={{ padding: '8px 12px 4px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>
-                Contas
+              <div style={{ padding: '10px 12px 6px', fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Contas conectadas
               </div>
               {accounts.map(acc => (
                 <button key={acc.id}
                   onClick={() => { switchAccount(acc.id!); setShowSwitcher(false) }}
                   style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 12px', background: acc.id === accountId ? 'rgba(102,126,234,0.15)' : 'transparent',
-                    border: 'none', cursor: 'pointer', color: 'var(--text-primary)', transition: 'background 0.15s',
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 9,
+                    padding: '8px 12px',
+                    background: acc.id === accountId ? 'var(--brand-dim)' : 'transparent',
+                    border: 'none', cursor: 'pointer', color: 'var(--text-primary)',
+                    transition: 'background 0.15s',
                   }}>
                   <div style={{
-                    width: 30, height: 30, borderRadius: '50%',
-                    background: 'rgba(102,126,234,0.25)',
+                    width: 28, height: 28, borderRadius: 8,
+                    background: 'var(--bg-overlay)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, overflow: 'hidden', flexShrink: 0,
-                    border: acc.id === accountId ? '2px solid rgba(102,126,234,0.8)' : '2px solid transparent',
+                    fontSize: 12, overflow: 'hidden', flexShrink: 0,
+                    border: acc.id === accountId ? '1.5px solid var(--brand)' : '1.5px solid var(--border-color)',
                   }}>
                     {acc.avatar_url
                       ? <img src={acc.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                       : acc.username?.charAt(0).toUpperCase() ?? 'I'}
                   </div>
-                  <span style={{ fontSize: 13, flex: 1, textAlign: 'left', fontWeight: acc.id === accountId ? 600 : 400 }}>
+                  <span style={{ fontSize: 12.5, flex: 1, textAlign: 'left', fontWeight: acc.id === accountId ? 600 : 400, letterSpacing: '-0.1px' }}>
                     @{acc.username}
                   </span>
                   {acc.id === accountId && (
-                    <span style={{ color: 'var(--accent-green)', fontSize: 14 }}>✓</span>
+                    <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 700 }}>✓</span>
                   )}
                 </button>
               ))}
-              <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
+              <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 8px' }} />
               <button
                 onClick={() => { navigate('/setup?new=1'); setShowSwitcher(false) }}
                 style={{
-                  width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '10px 12px', background: 'transparent', border: 'none',
-                  cursor: 'pointer', color: 'var(--accent-blue)', fontSize: 13,
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 9,
+                  padding: '9px 12px 11px', background: 'transparent', border: 'none',
+                  cursor: 'pointer', color: 'var(--brand)', fontSize: 12.5, fontWeight: 600,
                 }}>
-                <span>➕</span>
+                <span style={{ fontSize: 13 }}>＋</span>
                 Adicionar conta
               </button>
             </div>
@@ -151,7 +153,7 @@ export default function AppLayout() {
               <img
                 src={igAvatar}
                 alt={igUsername}
-                style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                style={{ width: 32, height: 32, borderRadius: 9, objectFit: 'cover', flexShrink: 0, border: '1.5px solid var(--border-strong)' }}
                 onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
               />
             ) : (
@@ -161,13 +163,13 @@ export default function AppLayout() {
             )}
             <div className="user-details" style={{ flex: 1, minWidth: 0 }}>
               <div className="user-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                @{igUsername || 'conta'} {accounts.length > 1 && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{showSwitcher ? '▲' : '▼'}</span>}
+                @{igUsername || 'conta'} {accounts.length > 1 && <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1 }}>{showSwitcher ? '▲' : '▼'}</span>}
               </div>
               <div className="user-email">{accounts.length > 1 ? `${accounts.length} contas` : 'Instagram'}</div>
             </div>
           </div>
           <button className="btn-logout" title="Adicionar conta" onClick={() => navigate('/setup?new=1')}>
-            ➕
+            ＋
           </button>
         </div>
       </aside>
@@ -181,35 +183,35 @@ export default function AppLayout() {
             ☰
           </button>
         </div>
-        {/* Banner de coleta em andamento (visível ao navegar para outra página) */}
+        {/* Banner de coleta em andamento */}
         {collecting && collectionJob && !location.pathname.includes(`/monitored/${collectionJob.profId}`) && (
           <div style={{
-            background: 'rgba(102,126,234,0.12)',
-            border: '1px solid rgba(102,126,234,0.3)',
-            borderRadius: 10,
-            padding: '10px 16px',
-            marginBottom: 16,
+            background: 'linear-gradient(90deg, var(--brand-dim), transparent)',
+            border: '1px solid var(--border-brand)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '10px 14px',
+            marginBottom: 18,
             display: 'flex',
             alignItems: 'center',
             gap: 10,
             flexWrap: 'wrap',
           }}>
-            <div className="spinner" style={{ width: 14, height: 14, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-blue)' }}>
+            <div className="spinner" style={{ width: 13, height: 13, flexShrink: 0 }} />
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--brand)' }}>
               Coletando @{collectionJob.username}...
             </span>
             {collectProgress && (
               <>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
                   {collectProgress.message}
                 </span>
                 <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 80, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ width: 72, height: 3, background: 'var(--border-color)', borderRadius: 99, overflow: 'hidden' }}>
                     <div style={{
                       height: '100%',
                       width: `${collectProgress.pct}%`,
-                      background: 'linear-gradient(90deg, #667eea, #764ba2)',
-                      borderRadius: 2,
+                      background: 'var(--gradient-brand)',
+                      borderRadius: 99,
                       transition: 'width 0.6s ease',
                     }} />
                   </div>
