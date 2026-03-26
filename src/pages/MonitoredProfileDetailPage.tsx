@@ -31,7 +31,13 @@ export default function MonitoredProfileDetailPage() {
   const [collecting, setCollecting] = useState(false)
   const [collectionMsg, setCollectionMsg] = useState('')
   const [collectProgress, setCollectProgress] = useState<{ step: string; message: string; pct: number; latestUsers?: string[] } | null>(null)
-  const [collectModes, setCollectModes] = useState<Set<string>>(new Set(['followers', 'following', 'posts']))
+  const [collectModes, setCollectModes] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(`collect_modes_${profId}`)
+      if (saved) return new Set(JSON.parse(saved) as string[])
+    } catch {}
+    return new Set(['followers', 'following', 'posts'])
+  })
 
   function toggleMode(m: string) {
     setCollectModes(prev => {
@@ -41,6 +47,7 @@ export default function MonitoredProfileDetailPage() {
       } else {
         next.add(m)
       }
+      localStorage.setItem(`collect_modes_${profId}`, JSON.stringify([...next]))
       return next
     })
   }
